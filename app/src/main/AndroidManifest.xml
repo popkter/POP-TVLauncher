@@ -7,6 +7,16 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="com.popkter.ptvlauncher.NETWORK_CONTROL" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_SCAN" android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.WRITE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED" />
     <uses-permission android:name="android.permission.WRITE_SECURE_SETTINGS" tools:ignore="ProtectedPermissions" />
     <!-- A launcher needs to enumerate installed packages, including non-launchable system components. -->
@@ -27,7 +37,8 @@
                 <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
         </activity>
-        <activity android:name=".WallpaperSettingsActivity" android:exported="false" android:screenOrientation="landscape" tools:ignore="LockedOrientationActivity" />
+        <activity android:name=".WallpaperSettingsActivity" android:theme="@style/Theme.PTVLauncher.WallpaperTransition" android:exported="false" android:screenOrientation="landscape" tools:ignore="LockedOrientationActivity" />
+        <activity android:name=".SourcePlaybackActivity" android:exported="false" android:screenOrientation="landscape" tools:ignore="LockedOrientationActivity" />
         <service android:name=".SwitcherService" android:exported="true" android:label="PTV 快速切换"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE" android:foregroundServiceType="specialUse">
             <property android:name="android.app.PROPERTY_SPECIAL_USE_FGS_SUBTYPE"

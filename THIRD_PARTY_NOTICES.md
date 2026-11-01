@@ -36,3 +36,8 @@ Reorder symbol: framework7-icons@5.0.5/svg/line_horizontal_3.svg (MIT), converte
 ZXing Core 3.5.3 — ZXing authors, Apache License 2.0.
 https://github.com/zxing/zxing
 Used locally to generate wallpaper upload QR codes. License: assets/licenses/Apache-2.0.txt
+
+Ionicons 7.4.0 — Copyright Ionic, MIT License.
+https://github.com/ionic-team/ionicons
+Bluetooth symbol converted to Android VectorDrawable without geometry changes.
+Full license: assets/licenses/Ionicons-MIT.txt

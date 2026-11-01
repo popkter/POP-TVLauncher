@@ -37,6 +37,7 @@ android {
 }
 
 dependencies {
+    implementation(project(":glass_comonpent"))
     implementation("com.google.zxing:core:3.5.3")
     implementation("androidx.datastore:datastore-preferences:1.2.0")
     implementation(libs.androidx.core.ktx)

@@ -65,7 +65,7 @@ object DefaultHomeController {
             context.startActivity(chooser)
             true
         } catch (_: RuntimeException) {
-            Toast.makeText(context, "系统未提供可用的桌面选择器，请参考安装说明通过 ADB 设置", Toast.LENGTH_LONG).show()
+            com.popkter.glass_comonpent.GlassMessages.show(context,"系统未提供可用的桌面选择器，请参考安装说明通过 ADB 设置")
             false
         }
     }
@@ -75,7 +75,7 @@ object DefaultHomeController {
             context.startActivity(Intent(Intent.ACTION_MAIN).addCategory(Intent.CATEGORY_HOME)
                 .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         } catch (_: RuntimeException) {
-            Toast.makeText(context, "系统未提供可用的主页入口", Toast.LENGTH_SHORT).show()
+            com.popkter.glass_comonpent.GlassMessages.show(context,"系统未提供可用的主页入口")
         }
     }
 }

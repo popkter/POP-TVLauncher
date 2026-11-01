@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"crypto/rand"
 	"crypto/sha256"
 	"embed"
 	"encoding/hex"
@@ -10,7 +9,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"io/fs"
 	"net"
 	"net/http"
 	"os"
@@ -23,7 +21,7 @@ import (
 	"time"
 )
 
-//go:embed web/* payload/*
+//go:embed payload/*
 var assets embed.FS
 
 const pkg = "com.popkter.ptvlauncher"
@@ -48,15 +46,18 @@ type TV struct {
 	Identity       string `json:"-"`
 }
 type State struct {
-	Busy     bool     `json:"busy"`
-	Phase    string   `json:"phase"`
-	Progress int      `json:"progress"`
-	Logs     []string `json:"logs"`
-	Error    string   `json:"error"`
-	Devices  []Device `json:"devices"`
-	TV       *TV      `json:"tv"`
-	Checks   []Check  `json:"checks"`
-	Backup   bool     `json:"backup"`
+	ReleaseSource     ReleaseSource `json:"releaseSource"`
+	ReleaseInfo       string        `json:"releaseInfo"`
+	ConnectionHistory []string      `json:"connectionHistory"`
+	Busy              bool          `json:"busy"`
+	Phase             string        `json:"phase"`
+	Progress          int           `json:"progress"`
+	Logs              []string      `json:"logs"`
+	Error             string        `json:"error"`
+	Devices           []Device      `json:"devices"`
+	TV                *TV           `json:"tv"`
+	Checks            []Check       `json:"checks"`
+	Backup            bool          `json:"backup"`
 }
 type Check struct {
 	Name   string `json:"name"`
@@ -64,25 +65,29 @@ type Check struct {
 	Detail string `json:"detail"`
 }
 type Backup struct {
-	Identity        string
-	Serial          string
-	Home            string
-	Services        string
-	Accessibility   string
-	SecureGranted   bool
-	HadApp          bool
-	BridgeInstalled bool
-	StockDisabled   bool
-	Created         string
+	Identity               string
+	Serial                 string
+	Home                   string
+	Services               string
+	Accessibility          string
+	SecureGranted          bool
+	WriteSettingsMode      string
+	HadApp                 bool
+	BridgeInstalled        bool
+	NetworkBridgeInstalled bool
+	ControlHelperStarted   bool
+	StockDisabled          bool
+	Created                string
 }
 type Request struct {
-	RemovePTV     bool   `json:"removePTV"`
-	ConfirmNative bool   `json:"confirmNative"`
-	Action        string `json:"action"`
-	Address       string `json:"address"`
-	Serial        string `json:"serial"`
-	Code          string `json:"code"`
-	Bridge        bool   `json:"bridge"`
+	ReleaseSource ReleaseSource `json:"releaseSource"`
+	RemovePTV     bool          `json:"removePTV"`
+	ConfirmNative bool          `json:"confirmNative"`
+	Action        string        `json:"action"`
+	Address       string        `json:"address"`
+	Serial        string        `json:"serial"`
+	Code          string        `json:"code"`
+	Bridge        bool          `json:"bridge"`
 }
 type App struct {
 	mu                      sync.Mutex
@@ -357,7 +362,33 @@ func (a *App) snapshot(t *TV) (*Backup, error) {
 		return nil, e
 	}
 	b.SecureGranted = strings.Contains(d, "android.permission.WRITE_SECURE_SETTINGS: granted=true")
+	if b.HadApp {
+		op, err := a.sh(s, "cmd", "appops", "get", pkg, "WRITE_SETTINGS")
+		if err != nil {
+			return nil, err
+		}
+		b.WriteSettingsMode = savedWriteSettingsMode(op)
+	}
 	return b, a.save(t, b)
+}
+func savedWriteSettingsMode(output string) string {
+	if strings.Contains(output, "No operations") {
+		return "default"
+	}
+	index := strings.Index(output, "WRITE_SETTINGS:")
+	if index < 0 {
+		return ""
+	}
+	fields := strings.Fields(output[index+len("WRITE_SETTINGS:"):])
+	if len(fields) == 0 {
+		return ""
+	}
+	mode := strings.TrimSuffix(fields[0], ";")
+	switch mode {
+	case "allow", "deny", "ignore", "default", "foreground":
+		return mode
+	}
+	return ""
 }
 func (a *App) selected() (*TV, error) {
 	a.mu.Lock()
@@ -420,6 +451,40 @@ func (a *App) install(t *TV, useBridge bool) (err error) {
 		return e
 	}
 	a.phase("配置快捷服务与自动恢复权限", 48)
+	const networkBridge = "com.popkter.ptvlauncher.networkbridge"
+	hadNetworkBridge, bridgeErr := a.installedForOwner(s, networkBridge)
+	if bridgeErr != nil {
+		return bridgeErr
+	}
+	if !hadNetworkBridge {
+		b.NetworkBridgeInstalled = true
+		if e = a.save(t, b); e != nil {
+			return e
+		}
+	}
+	bridgeOutput, bridgeErr := a.run("-s", s, "install", "-r", filepath.Join(a.dir, "payload", "NetworkBridge.apk"))
+	if bridgeErr != nil {
+		return bridgeErr
+	}
+	if !strings.Contains(bridgeOutput, "Success") {
+		return errors.New(bridgeOutput)
+	}
+	process, _ := a.sh(s, "pidof", "ptv-control-shell")
+	if strings.TrimSpace(process) == "" {
+		b.ControlHelperStarted = true
+		if e = a.save(t, b); e != nil {
+			return e
+		}
+	}
+	if _, e = a.run("-s", s, "push", filepath.Join(a.dir, "payload", "activate-local-control.sh"), "/data/local/tmp/ptv-activate-local-control.sh"); e != nil {
+		return e
+	}
+	if e = a.mustSh(s, "sh", "/data/local/tmp/ptv-activate-local-control.sh"); e != nil {
+		return e
+	}
+	if e = a.mustSh(s, "cmd", "appops", "set", pkg, "WRITE_SETTINGS", "allow"); e != nil {
+		return e
+	}
 	if e = a.mustSh(s, "pm", "grant", pkg, "android.permission.WRITE_SECURE_SETTINGS"); e != nil {
 		return e
 	}
@@ -666,6 +731,24 @@ func (a *App) restore(t *TV) error {
 		}
 	}
 
+	if b.NetworkBridgeInstalled {
+		if e = a.mustSh(s, "sh", "-c", "pkill -f '^ptv-control-shell$' || true"); e != nil {
+			return e
+		}
+		if _, e = a.run("-s", s, "uninstall", "com.popkter.ptvlauncher.networkbridge"); e != nil {
+			return e
+		}
+	}
+	if b.ControlHelperStarted && !b.NetworkBridgeInstalled {
+		if e = a.mustSh(s, "sh", "-c", "pkill -f '^ptv-control-shell$' || true"); e != nil {
+			return e
+		}
+	}
+	if b.HadApp && b.WriteSettingsMode != "" {
+		if e = a.mustSh(s, "cmd", "appops", "set", pkg, "WRITE_SETTINGS", b.WriteSettingsMode); e != nil {
+			return e
+		}
+	}
 	if b.BridgeInstalled {
 		p, e := a.sh(s, "pm", "list", "packages", "--user", "0", "com.ts.launcher")
 		if e != nil {
@@ -692,13 +775,17 @@ func (a *App) restore(t *TV) error {
 }
 func (a *App) execute(r Request) error {
 	switch r.Action {
+	case "saveReleaseSource":
+		return a.saveReleaseSource(r.ReleaseSource)
+	case "checkRelease":
+		return a.checkRelease()
 	case "quit":
 		time.AfterFunc(150*time.Millisecond, a.stop)
 		return nil
 	case "scan":
 		return a.scan()
 	case "connect":
-		ep, e := endpoint(r.Address)
+		ep, e := historyAddress(r.Address)
 		if e != nil {
 			return e
 		}
@@ -708,7 +795,14 @@ func (a *App) execute(r Request) error {
 		if e != nil {
 			return e
 		}
-		return a.inspect(ep)
+		if e = a.inspect(ep); e != nil {
+			return e
+		}
+		a.rememberConnection(ep)
+		a.phase("已连接电视，可以安装或配置 PTV", 100)
+		return nil
+	case "deleteHistory":
+		return a.changeHistory(r.Address, true)
 	case "pair":
 		ep, e := endpoint(r.Address)
 		if e != nil {
@@ -723,7 +817,16 @@ func (a *App) execute(r Request) error {
 		}
 		return e
 	case "select":
-		return a.inspect(r.Serial)
+		if e := a.inspect(r.Serial); e != nil {
+			return e
+		}
+		// USB serials are not network addresses; selecting a remote device is.
+		if strings.Contains(r.Serial, ":") {
+			if address, e := historyAddress(r.Serial); e == nil {
+				a.rememberConnection(address)
+			}
+		}
+		return nil
 	case "install", "configure", "installOnly", "verify", "restore", "restoreNative", "reboot", "homeSettings":
 		t, e := a.selected()
 		if e != nil {
@@ -753,7 +856,7 @@ func (a *App) execute(r Request) error {
 				return e
 			}
 			a.mu.Lock()
-			a.state.Checks = []Check{{"PTV 已安装", "ok", "已安装内置版本；点击一键配置启用桌面与快捷功能"}}
+			a.state.Checks = []Check{{"PTV 已安装", "ok", "已安装所选来源版本；点击一键配置启用桌面与快捷功能"}}
 			a.mu.Unlock()
 			a.phase("PTV 安装完成", 100)
 			return nil
@@ -802,6 +905,14 @@ func (a *App) api(w http.ResponseWriter, r *http.Request) {
 		a.uiGoneAt = time.Now()
 		a.mu.Unlock()
 		w.WriteHeader(202)
+		return
+	}
+	if req.Action == "deleteHistory" {
+		if err := a.changeHistory(req.Address, true); err != nil {
+			http.Error(w, "无法删除连接记录："+err.Error(), 500)
+			return
+		}
+		w.Write([]byte(`{"deleted":true}`))
 		return
 	}
 	a.mu.Lock()
@@ -862,73 +973,46 @@ func main() {
 			}
 		}
 	}
-	tokenBytes := make([]byte, 32)
-	if _, e = rand.Read(tokenBytes); e != nil {
-		panic(e)
+	a := &App{dir: dir, adb: filepath.Join(dir, "payload", "adb.exe"), state: State{Phase: "准备连接电视", Logs: []string{}, Devices: []Device{}, Checks: []Check{}}}
+	if err := a.loadHistory(); err != nil {
+		a.log("无法读取连接历史：" + err.Error())
 	}
-	a := &App{dir: dir, adb: filepath.Join(dir, "payload", "adb.exe"), token: hex.EncodeToString(tokenBytes), lastSeen: time.Now(), state: State{Phase: "准备连接电视", Logs: []string{}, Devices: []Device{}, Checks: []Check{}}}
-	a.ctx, a.cancel = context.WithCancel(context.Background())
-	a.done = make(chan struct{})
+	if err := a.loadReleaseSource(); err != nil {
+		a.log("无法读取更新来源：" + err.Error())
+	}
+	nativeContext(a)
 	defer a.stop()
-	preview := os.Getenv("PTV_PREVIEW") == "1"
-	if preview {
-		a.state.Phase = "界面预览 · 不连接电视"
-		a.adb = "/nonexistent/adb"
-	}
-	listener, e := net.Listen("tcp4", "127.0.0.1:0")
-	if e != nil {
-		panic(e)
-	}
-	a.origin = "http://" + listener.Addr().String()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/api/", a.api)
-	web, _ := fs.Sub(assets, "web")
-	files := http.FileServer(http.FS(web))
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		if r.Host != listener.Addr().String() {
-			http.Error(w, "Forbidden", 403)
-			return
-		}
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self'; script-src 'self'; img-src 'self' data:; frame-ancestors 'none'; base-uri 'none'; form-action 'none'")
-		w.Header().Set("X-Content-Type-Options", "nosniff")
-		files.ServeHTTP(w, r)
-	})
-	server := &http.Server{Handler: mux, ReadHeaderTimeout: 5 * time.Second}
-	served := make(chan error, 1)
-	go func() { served <- server.Serve(listener) }()
-	url := a.origin + "/#" + a.token
-	fmt.Println(url)
-	var closed <-chan struct{}
-	if !preview {
-		var cleanup func()
-		closed, cleanup, e = openUI(url)
-		if e != nil {
-			listener.Close()
-			return
-		}
-		defer cleanup()
-	}
-	// Native window/process observation is authoritative for our Edge window.
-	// Browser fallback uses an authenticated close notification with reload grace.
-	if closed == nil {
-		go a.watchBrowserFallback()
-	}
-	select {
-	case <-closed:
-	case <-a.done:
-	case e = <-served:
-		if e != nil && !errors.Is(e, http.ErrServerClosed) {
-			a.log(e.Error())
-		}
-	}
-	a.stop()
-	server.Close()
+	a.serveNative(os.Stdin, os.Stdout)
 
 }
 
 // Installation is explicit; configuration calls this only if PTV is absent.
 func (a *App) installAPK(t *TV) error {
-	out, err := a.run("-s", t.Serial, "install", "-r", filepath.Join(a.dir, "payload", "PTV.apk"))
+	path := filepath.Join(a.dir, "payload", "PTV.apk")
+	a.mu.Lock()
+	source := a.state.ReleaseSource
+	a.mu.Unlock()
+	if source.Enabled {
+		downloaded, cleanup, err := a.downloadRelease(source)
+		if err != nil {
+			return err
+		}
+		defer cleanup()
+		path = downloaded
+		// A download can take minutes; recheck identity before installing.
+		if err = a.inspect(t.Serial); err != nil {
+			return err
+		}
+		fresh, err := a.selected()
+		if err != nil {
+			return err
+		}
+		if fresh.Identity != t.Identity {
+			return errors.New("下载期间设备已改变，请重新连接电视")
+		}
+	}
+	a.phase("安装 PTV，保留已有数据", 50)
+	out, err := a.run("-s", t.Serial, "install", "-r", path)
 	if err != nil {
 		return fmt.Errorf("安装失败（不会卸载旧版或清除数据）：%w", err)
 	}

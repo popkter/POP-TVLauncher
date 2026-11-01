@@ -1,0 +1,12 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <permission android:name="com.popkter.ptvlauncher.NETWORK_CONTROL" android:protectionLevel="signature" />
+    <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
+    <uses-permission android:name="android.permission.CHANGE_WIFI_STATE" />
+    <uses-permission android:name="android.permission.ACCESS_FINE_LOCATION" />
+    <uses-permission android:name="android.permission.ACCESS_COARSE_LOCATION" />
+    <application android:label="PTV 网络连接" android:allowBackup="false" android:theme="@android:style/Theme.Material.NoActionBar">
+        <service android:name=".NetworkBridgeService" android:exported="true" android:permission="com.popkter.ptvlauncher.NETWORK_CONTROL" />
+        <provider android:name=".LocalControlRegistry" android:authorities="com.popkter.ptvlauncher.networkbridge.localcontrol" android:exported="true" />
+        <activity android:name=".PermissionActivity" android:exported="true" android:permission="com.popkter.ptvlauncher.NETWORK_CONTROL" />
+    </application>
+</manifest>

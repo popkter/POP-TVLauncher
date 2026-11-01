@@ -2,7 +2,7 @@ package com.popkter.ptvlauncher
 
 import android.Manifest
 import android.app.Application
-import android.app.AlertDialog
+import com.popkter.glass_comonpent.GlassDialog
 import android.content.*
 import android.content.pm.PackageManager
 import android.os.Handler
@@ -48,16 +48,13 @@ internal object ShortcutRecovery {
     }
     fun requestPermission(context:Context) {
         if(SystemLinks.accessibilityEnabled(context)) {schedule(context);return}
-        AlertDialog.Builder(context).setTitle("开启长按返回应用列表")
-            .setMessage("需要开启「PTV 快速切换」无障碍服务，以识别其他应用中的长按返回键。请在系统授权页面手动允许；未授权前此功能不会生效。")
-            .setPositiveButton("去授权") {_,_->
+        GlassDialog.show(context,"开启长按返回应用列表",
+            "需要开启「PTV 快速切换」无障碍服务，以识别其他应用中的长按返回键。请在系统授权页面手动允许；未授权前此功能不会生效。",
+            confirm="去授权",cancel="暂不授权") {
                 try {context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))}
-                catch(_:RuntimeException) {
-                    AlertDialog.Builder(context).setTitle("系统未提供授权页面")
-                        .setMessage("此电视需要通过电脑辅助授权，请参阅 PTV 安装说明。应用不能自行取得无障碍权限。")
-                        .setPositiveButton("知道了",null).show()
-                }
-            }.setNegativeButton("暂不授权",null).show()
+                catch(_:RuntimeException) {GlassDialog.show(context,"系统未提供授权页面",
+                    "此电视需要通过电脑辅助授权，请参阅 PTV 安装说明。应用不能自行取得无障碍权限。",confirm="知道了")}
+            }
     }
     private fun allowed(context:Context)=enabled(context) &&
         context.checkSelfPermission(Manifest.permission.WRITE_SECURE_SETTINGS)==PackageManager.PERMISSION_GRANTED

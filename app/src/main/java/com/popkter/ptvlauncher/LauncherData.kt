@@ -12,13 +12,14 @@ import androidx.datastore.preferences.core.*
 import androidx.datastore.preferences.preferencesDataStore
 import kotlinx.coroutines.*
 import kotlinx.coroutines.flow.*
+import kotlinx.coroutines.sync.withLock
 import java.io.IOException
 import java.text.Collator
 import java.util.Locale
 
 private val Context.launcherDataStore by preferencesDataStore("launcher")
 
-data class AppEntry(val id: String, val label: String, val icon: Bitmap?, val launchable: Boolean, val banner: Bitmap? = null, val brandColor: Int = 0xFF454A55.toInt())
+data class AppEntry(val id: String, val label: String, val icon: Bitmap?, val launchable: Boolean, val banner: Bitmap? = null, val brandColor: Int = 0xFF454A55.toInt(), val artworkKey: String = "")
 data class HomePreferences(val pins: List<String> = emptyList(), val initialized: Boolean = false,
     val idleMinutes: Int = 3, val rotate: Boolean = true,
     val customWallpaper: Boolean = false, val customRotate: Boolean = true, val fixedWallpaper: String = "")
@@ -90,6 +91,7 @@ class LauncherStore(context: Context, scope: CoroutineScope,
         .map { HomePreferences(PinOrder.decode(it[pins].orEmpty()), it[initialized] ?: false,
             it[idle] ?: 3, it[rotation] ?: true, it[customSource] ?: false, it[customRotation] ?: true, it[fixedPicture].orEmpty()) }
         .stateIn(scope, SharingStarted.Eagerly, HomePreferences())
+    suspend fun cachedPins(): List<String> = PinOrder.decode(dataStore.data.first()[pins].orEmpty())
     suspend fun initialize(defaults: List<String>) {
         dataStore.edit {
             if (it[initialized] != true) { it[pins] = PinOrder.encode(defaults.take(PinOrder.MAX_PINS)); it[initialized] = true }
@@ -124,15 +126,22 @@ class LauncherStore(context: Context, scope: CoroutineScope,
     suspend fun rotation(enabled: Boolean) = dataStore.edit { it[rotation] = enabled }
 }
 
-class AppRepository(private val context: Context, private val scope: CoroutineScope) {
+class AppRepository(private val context: Context, private val scope: CoroutineScope,
+    private val priority: suspend () -> List<String> = { emptyList() }) {
     val entries = MutableStateFlow<List<AppEntry>>(emptyList())
     // Never prune saved pins using a potentially stale disk snapshot.
     val scannedEntries = MutableStateFlow<List<AppEntry>?>(null)
     val loading = MutableStateFlow(true)
     private val snapshot=AppSnapshotCache(context.filesDir)
     private var refreshJob: Job? = null
+    private val cacheMutex = kotlinx.coroutines.sync.Mutex()
+    private val invalidated = mutableSetOf<String>()
+    private var persistedEntries: List<AppEntry>? = null
     private val receiver = object : BroadcastReceiver() {
-        override fun onReceive(context: Context?, intent: Intent?) { refresh() }
+        override fun onReceive(context: Context?, intent: Intent?) {
+            intent?.data?.schemeSpecificPart?.let {invalidated.add(it)}
+            refresh(debounce = true)
+        }
     }
     init {
         val filter = IntentFilter().apply {
@@ -143,19 +152,35 @@ class AppRepository(private val context: Context, private val scope: CoroutineSc
             androidx.core.content.ContextCompat.RECEIVER_EXPORTED)
         refresh()
     }
-    fun refresh() {
+    fun refresh(debounce: Boolean = false) {
         refreshJob?.cancel()
         refreshJob = scope.launch {
             loading.value = true
             try {
+                if(debounce)delay(250)
                 val started=android.os.SystemClock.elapsedRealtime()
                 if(entries.value.isEmpty()) {
-                    val cached=withContext(Dispatchers.IO) {snapshot.read()}
+                    val preferred=try { priority() }
+                        catch(error: CancellationException) {throw error}
+                        catch(error: Exception) {emptyList()}
+                    val cached=withContext(Dispatchers.IO) {
+                        cacheMutex.withLock {
+                            snapshot.readStaged(preferred) { home ->
+                                withContext(Dispatchers.Main.immediate) {
+                                    entries.value=home
+                                    android.util.Log.i("PTVStartup","Home apps ready: ${home.size}, ${android.os.SystemClock.elapsedRealtime()-started}ms")
+                                }
+                            }
+                        }
+                    }
                     if(cached.isNotEmpty()) {
                         entries.value=cached
+                        persistedEntries=cached
                         android.util.Log.i("PTVStartup","Cached apps ready: ${cached.size}, ${android.os.SystemClock.elapsedRealtime()-started}ms")
                     }
                 }
+                val dirty=invalidated.toSet()
+                val previous=entries.value.associateBy {it.id}
                 val list = withContext(Dispatchers.IO) {
                     val pm = context.packageManager
                     val resolved = listOf(Intent.CATEGORY_LEANBACK_LAUNCHER, Intent.CATEGORY_LAUNCHER)
@@ -163,23 +188,44 @@ class AppRepository(private val context: Context, private val scope: CoroutineSc
                     val launchers = resolved.map { it.activityInfo.packageName }.toSet()
                     val activityInfo = resolved.groupBy { it.activityInfo.packageName }
                     val collator = Collator.getInstance(Locale.SIMPLIFIED_CHINESE)
+                    val configuration=context.resources.configuration.toString()
+                    var reused=0
                     pm.getInstalledApplications(0).filter { it.packageName != context.packageName }.map { app ->
+                        ensureActive()
                         val launchable = app.enabled && (app.packageName in launchers ||
                             VendorAppEntrypoints.resolve(context,app.packageName)!=null)
+                        val stamp=runCatching {pm.getPackageInfo(app.packageName,0).lastUpdateTime}.getOrNull()
+                        val key=if(stamp==null) "" else "$stamp|${app.sourceDir}|$configuration|$launchable"
+                        val old=previous[app.packageName]
+                        if(app.packageName !in dirty && key.isNotEmpty() && old?.artworkKey==key && (!launchable || old.icon!=null)) {
+                            reused++
+                            return@map old
+                        }
                         val icon = if (launchable) runCatching { app.loadIcon(pm).toBitmap(128, 128) }.getOrNull() else null
                         val banner = if (launchable) runCatching {
                             (activityInfo[app.packageName]?.firstOrNull()?.activityInfo?.loadBanner(pm) ?: app.loadBanner(pm))?.toBitmap(320, 180)
                         }.getOrNull() else null
-                        AppEntry(app.packageName, app.loadLabel(pm).toString(), icon, launchable, banner, dominantColor(icon))
+                        AppEntry(app.packageName, app.loadLabel(pm).toString(), icon, launchable, banner, dominantColor(icon),key)
                     }.distinctBy { it.id }.sortedWith { a, b -> collator.compare(a.label, b.label) }
+                        .also {android.util.Log.i("PTVStartup","Artwork reused: $reused/${it.size}")}
                 }
                 entries.value = list
                 scannedEntries.value = list
+                invalidated.removeAll(dirty)
                 android.util.Log.i("PTVStartup","App scan ready: ${list.size}, ${android.os.SystemClock.elapsedRealtime()-started}ms")
-                withContext(Dispatchers.IO) {
-                    runCatching {snapshot.write(list)}.onFailure {android.util.Log.w("PTVStartup","App snapshot write failed",it)}
+                if(list!=persistedEntries) {
+                    val saved=withContext(Dispatchers.IO) {
+                        cacheMutex.withLock {
+                            runCatching {snapshot.write(list)}
+                                .onFailure {android.util.Log.w("PTVStartup","App snapshot write failed",it)}.isSuccess
+                        }
+                    }
+                    if(saved)persistedEntries=list
                 }
-            } finally { loading.value = false }
+            } catch(error: CancellationException) { throw error
+            } catch(error: Exception) {
+                android.util.Log.w("PTVStartup","App refresh failed; keeping cached apps",error)
+            } finally { if(currentCoroutineContext().isActive)loading.value = false }
         }
     }
     internal fun launchIntent(id:String):Intent? {
@@ -194,13 +240,13 @@ class AppRepository(private val context: Context, private val scope: CoroutineSc
             context.startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_RESET_TASK_IF_NEEDED)); true
         } catch (_: RuntimeException) { toast("无法打开应用，请检查应用是否仍已安装"); false }
     }
-    private fun toast(text: String) = Toast.makeText(context, text, Toast.LENGTH_SHORT).show()
+    private fun toast(text: String) = com.popkter.glass_comonpent.GlassMessages.show(context,text)
 }
 
 class LauncherGraph private constructor(context: Context) {
     val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     val store = LauncherStore(context, scope)
-    val apps = AppRepository(context, scope)
+    val apps = AppRepository(context, scope) { store.cachedPins() }
     val wallpaper = WallpaperRepository(context)
     val customWallpapers = CustomWallpapers(context)
     var wallpaperBackdrop: Bitmap? = null
@@ -240,7 +286,7 @@ object SystemLinks {
         try { context.startActivity(Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
         catch (_: RuntimeException) {
             try { context.startActivity(Intent(fallback).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)) }
-            catch (_: RuntimeException) { Toast.makeText(context, "系统未提供此设置入口", Toast.LENGTH_SHORT).show() }
+            catch (_: RuntimeException) { com.popkter.glass_comonpent.GlassMessages.show(context,"系统未提供此设置入口") }
         }
     }
     fun appInfo(context: Context, id: String) {

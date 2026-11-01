@@ -1,0 +1,5 @@
+<manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <application android:supportsRtl="true">
+        <activity android:name="com.popkter.glass_comonpent.GlassTestActivity" android:exported="false" android:theme="@android:style/Theme.Material.NoActionBar" />
+    </application>
+</manifest>

@@ -3,3 +3,7 @@
 /resource_windows_amd64.syso
 /preview.png
 /.build-tools/
+/native/bin/
+/native/obj/
+/native/publish/
+/native/ptv-backend.exe

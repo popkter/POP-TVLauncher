@@ -25,4 +25,6 @@ dependencyResolutionManagement {
 rootProject.name = "PTVLauncher"
 include(":app")
 include(":homebridge")
+include(":networkbridge")
+include(":glass_comonpent")
  

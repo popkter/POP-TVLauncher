@@ -1,0 +1,47 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows10.0.19041.0</TargetFramework>
+    <TargetPlatformMinVersion>10.0.17763.0</TargetPlatformMinVersion>
+    <UseWinUI>true</UseWinUI>
+    <WindowsPackageType>None</WindowsPackageType>
+    <InstallerFlavor Condition="'$(InstallerFlavor)' == ''">WithRuntime</InstallerFlavor>
+    <WindowsAppSDKSelfContained Condition="'$(InstallerFlavor)' == 'WithRuntime'">true</WindowsAppSDKSelfContained>
+    <SelfContained Condition="'$(InstallerFlavor)' == 'WithRuntime'">true</SelfContained>
+    <EnableMsixTooling>true</EnableMsixTooling>
+    <IncludeAllContentForSelfExtract Condition="'$(InstallerFlavor)' == 'WithRuntime'">true</IncludeAllContentForSelfExtract>
+    <PublishSingleFile Condition="'$(InstallerFlavor)' == 'WithRuntime'">true</PublishSingleFile>
+    <EnableCompressionInSingleFile Condition="'$(InstallerFlavor)' == 'WithRuntime'">true</EnableCompressionInSingleFile>
+    <DefaultItemExcludes>$(DefaultItemExcludes);obj/**;bin/**;publish/**</DefaultItemExcludes>
+    <RuntimeIdentifier>win-x64</RuntimeIdentifier>
+    <PlatformTarget>x64</PlatformTarget>
+    <Platforms>x64</Platforms>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>../app.ico</ApplicationIcon>
+    <AssemblyName>PTV-Installer-Windows-x64</AssemblyName>
+    <RootNamespace>PTVInstaller</RootNamespace>
+    <Version>2.0.4</Version>
+  </PropertyGroup>
+  <PropertyGroup Condition="'$(InstallerFlavor)' == 'NoRuntime'">
+    <WindowsAppSDKSelfContained>false</WindowsAppSDKSelfContained>
+    <SelfContained>false</SelfContained>
+    <PublishSingleFile>false</PublishSingleFile>
+    <IncludeAllContentForSelfExtract>false</IncludeAllContentForSelfExtract>
+    <EnableCompressionInSingleFile>false</EnableCompressionInSingleFile>
+    <UseAppHost>true</UseAppHost>
+    <WindowsAppSdkBootstrapInitialize>true</WindowsAppSdkBootstrapInitialize>
+    <WindowsAppSDKBootstrapAutoInitializeOptions_OnNoMatch_ShowUI>true</WindowsAppSDKBootstrapAutoInitializeOptions_OnNoMatch_ShowUI>
+    <DefineConstants>$(DefineConstants);RUNTIME_LITE</DefineConstants>
+  </PropertyGroup>
+  <Target Name="ValidateInstallerFlavor" BeforeTargets="PrepareForBuild">
+    <Error Condition="'$(InstallerFlavor)' != 'WithRuntime' and '$(InstallerFlavor)' != 'NoRuntime'" Text="InstallerFlavor must be WithRuntime or NoRuntime." />
+  </Target>
+  <ItemGroup>
+    <PackageReference Include="Microsoft.WindowsAppSDK.WinUI" Version="1.8.260803003" />
+    <PackageReference Include="Microsoft.WindowsAppSDK.Runtime" Version="1.8.260921001" />
+    <Content Include="ptv-backend.exe" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <Content Include="../app.ico" Link="PTV.ico" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+</Project>

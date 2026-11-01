@@ -28,6 +28,7 @@ function render(s){latest=s;const tv=s.tv,busy=s.busy;for(const id of ['connectB
  const ds=JSON.stringify(s.devices);if(ds!==lastDevices){lastDevices=ds;$('devices').replaceChildren(new Option('选择 USB 或已连接的电视',''));for(const d of s.devices||[]){const suffix={device:'已连接',unauthorized:'请在电视上授权',offline:'离线'}[d.state]||d.state;$('devices').add(new Option(d.serial+' · '+suffix,d.serial));}if(tv)$('devices').value=tv.serial;}
  const cs=JSON.stringify(s.checks);if(cs!==lastChecks){lastChecks=cs;$('checks').replaceChildren();for(const c of s.checks||[]){const row=document.createElement('div');row.className='check-row '+c.status;const mark=document.createElement('span');mark.className='mark';mark.textContent=c.status==='ok'?'✓':c.status==='manual'?'·':'!';const content=document.createElement('div'),title=document.createElement('strong'),detail=document.createElement('p');title.textContent=c.name;detail.textContent=c.detail;content.append(title,detail);row.append(mark,content);$('checks').append(row);}}
  $('logs').textContent=(s.logs||[]).join('\n')||'尚无操作记录';
+ if(window.renderConnectionHistory)window.renderConnectionHistory();
 }
 async function poll(){if(stopped)return;try{const r=await fetch('/api/state',{headers:{'X-PTV-Token':token}});if(!r.ok)throw new Error('无法读取助手状态');render(await r.json());}catch(e){$('error').hidden=false;$('error').textContent='无法连接本机安装助手。请重新运行 EXE。';}}
 poll();setInterval(poll,900);

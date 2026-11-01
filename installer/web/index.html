@@ -20,7 +20,7 @@
 <main>
  <header><div><div class="eyebrow">WELCOME TO PTV</div><h1>让电视，回归简单。</h1><p>连接电视，其余交给安装助手。</p></div><span class="pill" id="connectionState"><i></i>尚未连接</span></header>
  <section class="card" id="connection"><div class="section-heading"><span class="section-icon"><svg><use href="#tv"/></svg></span><div><h2>连接你的电视</h2><p>电脑与电视连接同一局域网，并在电视设置中开启 ADB 调试。</p></div></div>
- <form id="connectForm"><label for="address">电视地址</label><div class="input-row"><input id="address" name="address" placeholder="192.168.1.20:5555" autocomplete="off" spellcheck="false" required><button class="primary" type="submit" id="connectButton">连接电视<svg><use href="#arrow"/></svg></button></div></form>
+ <form id="connectForm"><label for="address">电视地址</label><div class="input-row"><div class="address-field" id="addressField"><input id="address" name="address" aria-controls="addressHistory" aria-expanded="false" placeholder="192.168.1.20:5555" autocomplete="off" spellcheck="false" required><div class="address-history" id="addressHistory" role="region" aria-label="连接历史" hidden><div class="history-heading">最近连接</div><div id="historyItems"></div></div></div><button class="primary" type="submit" id="connectButton">连接电视<svg><use href="#arrow"/></svg></button></div></form>
  <div class="help-line">首次连接时，请在电视上选择“允许调试”。</div>
  <div class="device-row"><select id="devices" aria-label="已连接设备"><option value="">选择 USB 或已连接的电视</option></select><button class="secondary small" id="scan">刷新设备</button></div>
  <details><summary>使用无线配对码连接</summary><div class="pair-fields"><label>配对地址<input id="pairAddress" placeholder="电视显示的 IP:配对端口"></label><label>配对码<input id="pairCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label><button class="secondary small" id="pair">配对</button></div><p class="hint">配对成功后，使用电视显示的“调试端口”在上方连接；两个端口通常不同。</p></details>
@@ -39,5 +39,5 @@
  <footer><span>PTV 安装助手 · 本地运行</span><button class="text-button" id="about">版本与许可</button><button class="text-button" id="quit">退出助手</button></footer>
  </main></div>
  <dialog id="dialog"><button class="dialog-close" id="dismiss" aria-label="关闭"><svg><use href="#close"/></svg></button><span class="dialog-icon"><svg><use href="#shield"/></svg></span><h2 id="dialogTitle"></h2><p id="dialogBody"></p><label class="restore-choice" id="restoreChoice" hidden><input type="checkbox" id="removePTV"><span>同时卸载 PTV 和兼容入口，并删除布局、自定义壁纸及偏好（不可恢复）</span></label><div class="dialog-actions"><button class="secondary" id="cancelDialog">取消</button><button class="primary" id="confirmDialog">继续</button></div></dialog>
- <script src="/app.js"></script>
+ <script src="/app.js"></script><script src="/history.js"></script>
 </body></html>

@@ -5,6 +5,14 @@ import (
 	"testing"
 )
 
+func TestSavedWriteSettingsMode(t *testing.T) {
+	for input, want := range map[string]string{"No operations.": "default", "WRITE_SETTINGS: allow; time=1s": "allow", "WRITE_SETTINGS: ignore": "ignore", "unknown output": ""} {
+		if got := savedWriteSettingsMode(input); got != want {
+			t.Fatalf("%q: got %q want %q", input, got, want)
+		}
+	}
+}
+
 func TestKeepDataRestoreThenConfigureWithoutReinstall(t *testing.T) {
 	a, tv, calls := nativeFixture(t)
 	disabled := map[string]bool{stock: true}
@@ -59,7 +67,18 @@ func TestKeepDataRestoreThenConfigureWithoutReinstall(t *testing.T) {
 	}
 	all := strings.Join(*calls, "\n")
 	for _, forbidden := range []string{"uninstall", "install -r", "'pm' 'clear'"} {
-		if strings.Contains(all, forbidden) {
+		// A newly introduced companion may be installed; existing PTV data must remain intact.
+		filtered := all
+		if forbidden == "install -r" {
+			var lines []string
+			for _, line := range strings.Split(all, "\n") {
+				if !strings.Contains(line, "NetworkBridge.apk") {
+					lines = append(lines, line)
+				}
+			}
+			filtered = strings.Join(lines, "\n")
+		}
+		if strings.Contains(filtered, forbidden) {
 			t.Fatalf("preservation flow used %s", forbidden)
 		}
 	}
@@ -84,7 +103,13 @@ func TestConfigureInstallsOnlyWhenMissing(t *testing.T) {
 			t.Fatal(err)
 		}
 		all := strings.Join(*calls, "\n")
-		if strings.Contains(all, "install -r") == exists {
+		installedPTV := false
+		for _, line := range strings.Split(all, "\n") {
+			if strings.Contains(line, "install -r") && strings.Contains(line, "PTV.apk") {
+				installedPTV = true
+			}
+		}
+		if installedPTV == exists {
 			t.Fatalf("wrong installation behavior: exists=%v", exists)
 		}
 		if !strings.Contains(all, "'pm' 'enable' '--user' '0' '"+pkg+"'") {

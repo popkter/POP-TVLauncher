@@ -1,5 +1,6 @@
 // Copyright 2026 popkter. SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 package com.popkter.ptvlauncher
+import com.popkter.glass_comonpent.*
 
 import android.content.Context
 import android.graphics.*
@@ -16,10 +17,8 @@ internal fun Context.dp(value: Float) = (value * resources.displayMetrics.densit
 internal fun Context.dp(value: Int) = dp(value.toFloat())
 internal const val WHITE = -0x1
 internal val SECONDARY = Color.rgb(204, 209, 216)
-internal fun rounded(color: Int, radius: Float, stroke: Int = Color.TRANSPARENT) =
-    GradientDrawable().apply { setColor(color); cornerRadius = radius; setStroke(1, stroke) }
 internal fun label(context: Context, value: String, size: Float = 12f, secondary: Boolean = false) =
-    TextView(context).apply {
+    GlassTextView(context).apply {
         text = value; textSize = size; setTextColor(if (secondary) SECONDARY else WHITE)
         fontFeatureSettings = "tnum"; includeFontPadding = false
     }
@@ -90,7 +89,7 @@ internal class NativeSurface(
     private var outgoing:View?=null
     private var dismissing=false
     // Include the rail's left inset and focus halo so the whole rail clears the screen.
-    private fun railOffscreenX()=-(context.dp(20+AppLayout.RAIL_WIDTH+16)).toFloat()
+    private fun railOffscreenX()=(if(layoutDirection==View.LAYOUT_DIRECTION_RTL)1 else -1)*context.dp(20+AppLayout.RAIL_WIDTH+16).toFloat()
     private fun enter(view:View, horizontal:Boolean=false) {
         if(view===panels && panels.findViewWithTag<View>("library:backdrop")!=null) {
             // The blur must cover the window throughout entry, independently of content motion.
@@ -127,45 +126,50 @@ internal class NativeSurface(
             }.start()
     }
     override fun onAttachedToWindow() {
-        super.onAttachedToWindow()
+        super.onAttachedToWindow();GlassMessages.register(this)
         if(floating)enter(if(mode==null)railScroll else panels,mode==null)
     }
+    override fun onDetachedFromWindow(){closeActions(immediate=true,restore=false);GlassMessages.unregister(this);super.onDetachedFromWindow()}
     private var restoreTag: String?=null
     private var editing: String?=null
-    private var actionMenu:LinearLayout?=null
-    private var closingActions:View?=null
+    private var actionMenu:AppIconMenu?=null
     private var actionAnchor:AppCardView?=null
-    private var actionFocus:View?=null
     private var librarySelection=0
     private var libraryMode:String?=null
     private var libraryPinnedOnly=false
     private var libraryManaging=false
     private var refreshLibraryPins:(()->Unit)?=null
+    private var controlCenter:ControlCenterView?=null
     init {
         clipChildren=false;clipToPadding=false
         val heightDp=context.resources.displayMetrics.heightPixels/context.resources.displayMetrics.density
         val visibleRows=((heightDp-AppLayout.RAIL_TOP-24-20)/AppLayout.RAIL_ROW_HEIGHT).toInt().coerceAtLeast(1)
         val viewportHeight=visibleRows*AppLayout.RAIL_ROW_HEIGHT+20
         addView(railScroll,LayoutParams(context.dp(AppLayout.RAIL_WIDTH),context.dp(viewportHeight),Gravity.START or Gravity.TOP).apply {
-            leftMargin=context.dp(20);topMargin=context.dp(AppLayout.RAIL_TOP)
+            marginStart=context.dp(20);topMargin=context.dp(AppLayout.RAIL_TOP)
         })
         addView(panels,LayoutParams(-1,-1))
     }
     fun update(entries: List<AppEntry>, settings: HomePreferences) {
         val entriesChanged=apps!=entries
-        val different=entriesChanged || prefs.pins!=settings.pins
+        val pinsChanged=prefs.pins!=settings.pins
+        val railChanged=rail.childCount==0 || pinsChanged ||
+            homeApps(apps,prefs.pins)!=homeApps(entries,settings.pins)
         val initializing=(!prefs.initialized && settings.initialized) ||
             (apps.none{it.launchable} && entries.any{it.launchable})
         apps=entries;prefs=settings
-        if(different) {
+        controlCenter?.refresh()
+        if(railChanged) {
             closeActions(immediate=true)
             val focus=if(initializing)null else findFocus()?.tag?.toString()
             buildRail()
+            if(mode==null)post { focus?.let { findViewWithTag<View>(it)?.requestFocus() } ?: firstRail() }
+        }
+        if(entriesChanged || pinsChanged) {
             if(mode in listOf("apps","customize","components")) {
                 val refresh=refreshLibraryPins
                 if(!entriesChanged && refresh!=null)refresh() else show(mode)
             }
-            else if(mode==null) post { focus?.let { findViewWithTag<View>(it)?.requestFocus() } ?: firstRail() }
         }
     }
     override fun dispatchKeyEvent(event:KeyEvent):Boolean {
@@ -180,9 +184,11 @@ internal class NativeSurface(
         return super.dispatchKeyEvent(event)
     }
     fun firstRail() { railScroll.scrollTo(0,0);rail.getChildAt(0)?.requestFocus() }
+    private fun homeApps(entries: List<AppEntry>, pins: List<String>) =
+        pins.take(PinOrder.MAX_PINS).mapNotNull {id -> entries.find {it.id==id && it.launchable}}
     private fun buildRail() {
         rail.removeAllViews()
-        val pinned=prefs.pins.take(10).mapNotNull { id->apps.find { it.id==id && it.launchable } }
+        val pinned=homeApps(apps,prefs.pins)
         pinned.forEachIndexed { index,app ->
             val card=AppCardView(context).apply {
                 bind(app,false,true)
@@ -221,15 +227,47 @@ internal class NativeSurface(
     }
     fun back() {
         if(dismissing)return
+        controlCenter?.let {it.back();return}
         if(actionMenu!=null) {closeActions();return}
-        if(closingActions!=null)return
         if(mode=="apps" && libraryManaging) {libraryManaging=false;show("apps");return}
         if(editing!=null) { editing=null;changed();return }
         when(mode) { "licenses","default_home"->show("settings");"settings"->show(null);"apps","customize","components"->show(null);null->if(floating)dismiss() else firstRail();else->if(floating)dismiss() else show(null) }
     }
-    fun refreshStatus() { if(mode in listOf("settings","default_home"))show(mode) }
+    fun refreshStatus() { controlCenter?.let {it.refresh();return};if(mode in listOf("settings","default_home"))show(mode) }
+    private fun openControlCenter() {
+        controlCenter?.let {it.refresh();return}
+        closeActions(immediate=true,restore=false)
+        val button=rootView.findViewWithTag<View>("桌面设置按钮")
+        val origin=IntArray(2);getLocationOnScreen(origin)
+        val location=IntArray(2);button?.getLocationOnScreen(location)
+        val anchor=if(button!=null)RectF((location[0]-origin[0]).toFloat(),(location[1]-origin[1]).toFloat(),
+            (location[0]-origin[0]+button.width).toFloat(),(location[1]-origin[1]+button.height).toFloat())
+            else RectF((width-context.dp(AppLayout.HOME_RIGHT_MARGIN+36)).toFloat(),context.dp(20).toFloat(),(width-context.dp(AppLayout.HOME_RIGHT_MARGIN)).toFloat(),context.dp(56).toFloat())
+        // Capture before changing visibility: clock, wallpaper and cards remain the same desktop.
+        val snapshot=if(!floating&&rootView.width>0&&rootView.height>0)runCatching {
+            val w=480;val h=(rootView.height*w.toFloat()/rootView.width).roundToInt().coerceAtLeast(1)
+            Bitmap.createBitmap(w,h,Bitmap.Config.ARGB_8888).also {b->val canvas=Canvas(b);canvas.scale(w.toFloat()/rootView.width,h.toFloat()/rootView.height);rootView.draw(canvas)}
+        }.getOrNull() else null
+        outgoing?.let{it.animate().cancel();removeView(it)};outgoing=null
+        panels.animate().cancel();panels.removeAllViews();panels.alpha=1f;panels.translationX=0f;panels.translationY=0f
+        railScroll.animate().cancel();railScroll.alpha=1f;railScroll.translationX=0f
+        railScroll.visibility=VISIBLE;railScroll.descendantFocusability=FOCUS_BLOCK_DESCENDANTS
+        mode="settings"
+        val center=ControlCenterView(context,graph,anchor,{
+            val current=controlCenter;controlCenter=null;current?.dispose();panels.removeAllViews();mode=null
+            railScroll.descendantFocusability=FOCUS_AFTER_DESCENDANTS
+            changed();button?.requestFocus()?:firstRail()
+        },{show("components")})
+        controlCenter=center;panels.addView(center,LayoutParams(-1,-1));changed()
+        center.prepare(snapshot,wallpaper?:fallbackWallpaper)
+    }
     fun show(kind: String?) {
         if(dismissing)return
+        if(kind=="settings") {openControlCenter();return}
+        controlCenter?.let {
+            if(kind==null){it.closeToDesktop();return}
+            it.dispose();controlCenter=null;panels.removeAllViews()
+        }
         closeActions(immediate=true,restore=false)
         if(mode==null)restoreTag=findFocus()?.tag?.toString()
         if(mode in listOf("apps","customize","components")) {
@@ -269,87 +307,33 @@ internal class NativeSurface(
     }
     private fun toggle(app: AppEntry) {
         graph.scope.launchSafely {
-            if(!graph.store.toggle(app.id)) Toast.makeText(context,"最多显示 10 个应用，请先移除一个",Toast.LENGTH_SHORT).show()
+            if(!graph.store.toggle(app.id)) com.popkter.glass_comonpent.GlassMessages.show(context,"最多显示 10 个应用，请先移除一个")
         }
     }
     private fun closeActions(immediate:Boolean=false,restore:Boolean=true,after:()->Unit={}) {
-        closingActions?.let {it.animate().cancel();removeView(it)};closingActions=null
         val menu=actionMenu
-        actionMenu=null
-        val anchor=actionAnchor;val focus=actionFocus
-        actionAnchor=null;actionFocus=null
-        anchor?.actionsExpanded=false
-        fun finish() {
-            if(menu!=null)removeView(menu)
-            if(closingActions===menu)closingActions=null
-            if(restore && focus?.isAttachedToWindow==true)focus.requestFocus()
-            after()
-        }
-        if(menu==null || immediate) {finish();return}
-        closingActions=menu
-        menu.descendantFocusability=FOCUS_BLOCK_DESCENDANTS
-        menu.animate().cancel()
-        menu.animate().alpha(0f).translationX(-context.dp(18).toFloat()).scaleX(.94f).setDuration(150)
-            .setInterpolator(android.view.animation.AccelerateInterpolator()).withEndAction {finish()}.start()
+        if(menu==null){after();return}
+        menu.restoreFocusOnDismiss=restore
+        if(immediate){menu.close();actionMenu=null;actionAnchor?.actionsExpanded=false;actionAnchor=null;after()}
+        else menu.dismiss {after()}
     }
     private fun manage(app:AppEntry,anchor:View?) {
         val card=anchor as? AppCardView ?: return
-        closeActions(immediate=true,restore=false)
-        editing=null
-        actionAnchor=card;actionFocus=if(card.library)panels.findViewWithTag<GridView>("library") else card
-        card.actionsExpanded=true
-        val menu=LinearLayout(context).apply {
-            tag="app:actions";orientation=LinearLayout.HORIZONTAL;gravity=Gravity.CENTER_VERTICAL
-            setPadding(context.dp(8),context.dp(8),context.dp(8),context.dp(8))
-            // Actions float directly over the picture; only the focused button is filled.
-            clipChildren=false;clipToPadding=false
-        }
+        closeActions(immediate=true,restore=false);editing=null
+        actionAnchor=card;card.actionsExpanded=true
         val pinned=app.id in prefs.pins
-        fun action(kind:String,title:String,enabled:Boolean=true,run:()->Unit) {
-            val button=AppActionView(context,kind,title).apply {
-                id=View.generateViewId();isEnabled=enabled;isFocusable=enabled;alpha=if(enabled)1f else .38f
-                setOnClickListener {if(actionMenu===menu)closeActions(after=run)}
-                setOnKeyListener {_,code,event->
-                    if(event.action!=KeyEvent.ACTION_DOWN)false
-                    else when(code) {
-                        KeyEvent.KEYCODE_DPAD_UP,KeyEvent.KEYCODE_DPAD_DOWN->true
-                        KeyEvent.KEYCODE_DPAD_LEFT,KeyEvent.KEYCODE_DPAD_RIGHT->{
-                            val enabled=(0 until menu.childCount).map {menu.getChildAt(it)}.filter {it.isEnabled}
-                            val index=enabled.indexOf(this)
-                            val next=index+if(code==KeyEvent.KEYCODE_DPAD_LEFT)-1 else 1
-                            enabled.getOrNull(next)?.requestFocus()
-                            true
-                        }
-                        else->false
-                    }
-                }
-            }
-            menu.addView(button,LinearLayout.LayoutParams(context.dp(56),context.dp(56)))
-        }
-        action(if(pinned)"remove" else "add",if(pinned)"从桌面移除" else "添加到桌面",app.launchable) {toggle(app)}
-        action("edit","编辑排序",pinned && app.launchable) {
-            editing=app.id;show(null)
-            post {findViewWithTag<View>("app:"+app.id)?.requestFocus()}
-            Toast.makeText(context,"上下调整位置，确定或返回完成",Toast.LENGTH_SHORT).show()
-        }
-        action("info","应用信息") {
-            if(floating)dismiss()
-            SystemLinks.appInfo(context,app.id)
-        }
-        // Position beside the artwork, outside the rail's clipped scrolling viewport.
-        val rect=Rect();card.getDrawingRect(rect);offsetDescendantRectToMyCoords(card,rect)
-        val menuWidth=context.dp(184);val menuHeight=context.dp(72);val edge=context.dp(16)
-        val artworkRight=if(card.library)rect.right else rect.left+context.dp(8+AppLayout.RAIL_CARD_WIDTH)
-        val beside=artworkRight+context.dp(18)
-        val below=card.library && beside+menuWidth>width-edge
-        val left=(if(below)rect.right-menuWidth else beside).coerceIn(edge,(width-menuWidth-edge).coerceAtLeast(edge))
-        val top=(if(below)rect.bottom+context.dp(4) else rect.top+context.dp(8)+(context.dp(AppLayout.RAIL_CARD_HEIGHT)-menuHeight)/2).coerceIn(edge,(height-menuHeight-edge).coerceAtLeast(edge))
-        actionMenu=menu
-        addView(menu,LayoutParams(menuWidth,menuHeight).apply {leftMargin=left;topMargin=top})
-        menu.pivotX=0f;menu.alpha=0f;menu.translationX=-context.dp(18).toFloat();menu.scaleX=.94f
-        menu.animate().alpha(1f).translationX(0f).scaleX(1f).setDuration(200)
-            .setInterpolator(android.view.animation.DecelerateInterpolator()).start()
-        (0 until menu.childCount).map {menu.getChildAt(it)}.firstOrNull {it.isEnabled}?.requestFocus()
+        val menu=AppIconMenu(card,listOf(
+            GlassMenuItem(if(pinned)"remove" else "add",if(pinned)"从桌面移除" else "添加到桌面",context.getDrawable(if(pinned)R.drawable.f7_minus_circle else R.drawable.f7_plus_circle),app.launchable),
+            GlassMenuItem("edit","编辑排序",context.getDrawable(R.drawable.f7_line_horizontal_3),pinned && app.launchable),
+            GlassMenuItem("info","应用信息",context.getDrawable(R.drawable.f7_info_circle))
+        )) {action->when(action.key) {
+            "add","remove"->toggle(app)
+            "edit"->{editing=app.id;show(null);post {findViewWithTag<View>("app:"+app.id)?.requestFocus()};GlassMessages.show(context,"上下调整位置，确定或返回完成")}
+            "info"->{if(floating)dismiss();SystemLinks.appInfo(context,app.id)}
+        }}
+        menu.returnFocusTo=if(card.library)panels.findViewWithTag<View>("library") ?: card else card
+        menu.onDismiss={card.actionsExpanded=false;if(actionMenu===menu){actionMenu=null;actionAnchor=null}}
+        actionMenu=menu;menu.show()
     }
     private fun buildLibrary(kind:String) {
         val managing=kind=="customize" || (kind=="apps" && libraryManaging)
@@ -375,25 +359,20 @@ internal class NativeSurface(
         }
         frame.addView(box,LayoutParams(-1,-1))
         val header=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL}
-        header.addView(AppListGlyph(context),LinearLayout.LayoutParams(context.dp(22),context.dp(22)).apply {rightMargin=context.dp(13)})
+        header.addView(AppListGlyph(context),LinearLayout.LayoutParams(context.dp(22),context.dp(22)).apply {marginEnd=context.dp(13)})
         header.addView(label(context,when(kind){"customize"->"自定义主屏幕";"components"->"系统组件";else->"App List"},26f).apply {
             typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL);letterSpacing=-.025f
         },LinearLayout.LayoutParams(0,-2,1f))
         val appCount=label(context,if(managing)"已添加 ${prefs.pins.size} / 10" else items.size.toString()+" 个 App",11f,true)
-        header.addView(appCount,LinearLayout.LayoutParams(-2,-2).apply {rightMargin=context.dp(18)})
-        var manageButton:TextView?=null
+        header.addView(appCount,LinearLayout.LayoutParams(-2,-2).apply {marginEnd=context.dp(18)})
+        var manageButton:GlassButton?=null
         if(kind=="apps") {
-            manageButton=label(context,if(managing)"完成" else "管理桌面应用",12f).apply {
-                id=View.generateViewId();tag="library:manage";gravity=Gravity.CENTER
-                isFocusable=true;isClickable=true
-                fun state(focus:Boolean) {
-                    background=rounded(if(focus)WHITE else 0x30ffffff,context.dp(17).toFloat())
-                    setTextColor(if(focus)0xff182231.toInt() else WHITE)
-                }
-                state(false);setOnFocusChangeListener {_,focus->state(focus)}
-                setOnClickListener {libraryManaging=!libraryManaging;show("apps")}
+            manageButton=GlassTextButton(context).apply {
+                title=if(managing)"完成" else "管理桌面应用";tag="library:manage";contentLayout=GlassContentLayout.ICON_TEXT
+                glassStyle=glassStyle.copy(contentPadding=8f,cornerRadius=20f);titleView.textSize=12f
+                setOnClickListener{libraryManaging=!libraryManaging;show("apps")}
             }
-            header.addView(manageButton,LinearLayout.LayoutParams(context.dp(112),context.dp(34)).apply {rightMargin=context.dp(12)})
+            header.addView(manageButton,LinearLayout.LayoutParams(context.dp(112),context.dp(34)).apply {marginEnd=context.dp(12)})
         }
         val close=closeControl(context,"收起 AppList") {
             if(kind=="apps" && libraryManaging) {libraryManaging=false;show("apps")} else show(null)
@@ -401,55 +380,50 @@ internal class NativeSurface(
         header.addView(close,LinearLayout.LayoutParams(context.dp(44),context.dp(44)))
         box.addView(header,LinearLayout.LayoutParams(-1,context.dp(44)))
         val alignedRows=mutableListOf<View>(header)
-        val updateChips=mutableListOf<()->Unit>()
         var refreshFilter:()->Unit={}
         var filterFocus:View=manageButton ?: close
         if(kind=="apps" && !managing) {
-            val tabs=LinearLayout(context).apply {gravity=Gravity.CENTER_VERTICAL}
-            alignedRows.add(tabs)
-            fun chip(title:String,pinnedOnly:Boolean) {
-                val selected=libraryPinnedOnly==pinnedOnly
-                val chip=TextView(context).apply {
-                    id=View.generateViewId();tag=if(pinnedOnly)"library:pinned" else "library:all"
-                    text=title;textSize=11f;gravity=Gravity.CENTER;isFocusable=true;isClickable=true
-                    typeface=Typeface.create("sans-serif-medium",Typeface.NORMAL)
-                    fun state(focused:Boolean) {
-                        val selected=libraryPinnedOnly==pinnedOnly
-                        background=rounded(when{focused->WHITE;selected->0x35ffffff;else->0x10ffffff},context.dp(18).toFloat(),if(selected)0x40ffffff else 0x12ffffff)
-                        setTextColor(if(focused)0xff182231.toInt() else if(selected)WHITE else SECONDARY)
-                    }
-                    updateChips.add {state(hasFocus())}
-                    state(false)
-                    setOnFocusChangeListener{_,focus->
-                        if(focus) {
-                            filterFocus=this
-                            if(libraryPinnedOnly!=pinnedOnly) {
-                                libraryPinnedOnly=pinnedOnly;librarySelection=0;libraryMode=kind
-                                refreshFilter()
-                            }
-                        }
-                        updateChips.forEach {it()}
-                    }
-                    setOnClickListener{panels.findViewWithTag<GridView>("library")?.requestFocus()}
-                }
-                if(selected)filterFocus=chip
-                tabs.addView(chip,LinearLayout.LayoutParams(context.dp(109),context.dp(32)).apply{rightMargin=context.dp(8)})
+            val tabs=GlassSegmentedControl(context).apply {
+                tag="library:tabs";glassStyle=glassStyle.copy(contentPadding=7f,cornerRadius=16f)
+                submitTabs(listOf(GlassOption("all","所有 App"),GlassOption("pinned","主屏幕")),if(libraryPinnedOnly)"pinned" else "all")
             }
-            chip("所有 App",false);chip("主屏幕",true)
-            tabs.getChildAt(0).nextFocusRightId=tabs.getChildAt(1).id
-            tabs.getChildAt(1).nextFocusLeftId=tabs.getChildAt(0).id
-            tabs.getChildAt(1).nextFocusRightId=manageButton?.id ?: close.id
-            manageButton?.nextFocusLeftId=tabs.getChildAt(1).id
-            manageButton?.nextFocusRightId=close.id
-            close.nextFocusLeftId=manageButton?.id ?: tabs.getChildAt(1).id
-            box.addView(tabs,LinearLayout.LayoutParams(-1,context.dp(32)).apply{topMargin=context.dp(17);bottomMargin=context.dp(10)})
+            val tabRow=LinearLayout(context).apply{gravity=Gravity.CENTER_VERTICAL}
+            tabRow.addView(tabs,LinearLayout.LayoutParams(-2,context.dp(40)))
+            alignedRows.add(tabRow)
+            val all=tabs.tabView("all")!!;val pinned=tabs.tabView("pinned")!!
+            listOf(all,pinned).forEach { tab->
+                tab.titleView.textSize=11f
+                tab.layoutParams=(tab.layoutParams as LinearLayout.LayoutParams).apply{width=context.dp(109);height=context.dp(32);marginEnd=if(tab===pinned)0 else context.dp(8)}
+                tab.setOnKeyListener{_,code,event->
+                    if(event.action==KeyEvent.ACTION_DOWN && code==(if(layoutDirection==View.LAYOUT_DIRECTION_RTL)KeyEvent.KEYCODE_DPAD_LEFT else KeyEvent.KEYCODE_DPAD_RIGHT) && tab===pinned){(manageButton ?: close).requestFocus();true}else false
+                }
+            }
+            all.tag="library:all";pinned.tag="library:pinned"
+            filterFocus=if(libraryPinnedOnly)pinned else all
+            tabs.onTabSelected={key->
+                libraryPinnedOnly=key=="pinned";librarySelection=0;libraryMode=kind
+                filterFocus=tabs.tabView(key)!!;refreshFilter()
+            }
+            tabs.onTabFocused={key->filterFocus=tabs.tabView(key)!!;tabs.select(key)}
+            tabs.onTabConfirmed={panels.findViewWithTag<GridView>("library")?.requestFocus()}
+            val rtl=layoutDirection==View.LAYOUT_DIRECTION_RTL
+            if(rtl){
+                all.nextFocusLeftId=pinned.id;pinned.nextFocusRightId=all.id
+                pinned.nextFocusLeftId=manageButton?.id ?: close.id
+                manageButton?.nextFocusRightId=pinned.id;manageButton?.nextFocusLeftId=close.id;close.nextFocusRightId=manageButton?.id ?: pinned.id
+            }else{
+                all.nextFocusRightId=pinned.id;pinned.nextFocusLeftId=all.id
+                pinned.nextFocusRightId=manageButton?.id ?: close.id
+                manageButton?.nextFocusLeftId=pinned.id;manageButton?.nextFocusRightId=close.id;close.nextFocusLeftId=manageButton?.id ?: pinned.id
+            }
+            box.addView(tabRow,LinearLayout.LayoutParams(-1,context.dp(40)).apply{topMargin=context.dp(17);bottomMargin=context.dp(10)})
         } else {
             box.addView(label(context,if(managing)"选择 App，按确定添加或移除  ·  带勾选标记的 App 已在桌面" else "这些组件暂未识别到启动入口",11f,true),
                 LinearLayout.LayoutParams(-1,context.dp(32)).apply{topMargin=context.dp(12)})
         }
         val totalRows=(items.size+AppLayout.LIBRARY_COLUMNS-1)/AppLayout.LIBRARY_COLUMNS
         val page=label(context,if(items.isEmpty())"" else "1 / "+totalRows+" 排",10f,true)
-        val grid=GridView(context).apply {
+        val grid=LibraryGridView(context).apply {
             id=View.generateViewId();tag="library";numColumns=AppLayout.LIBRARY_COLUMNS
             nextFocusUpId=filterFocus.id
             verticalSpacing=context.dp(10);horizontalSpacing=context.dp(18)
@@ -498,15 +472,7 @@ internal class NativeSurface(
         // Leave a faded preview of the next row so overflow is visible before scrolling.
         // GridView also reserves its fading edge when bringing a selected row into view.
         gridBox.addOnLayoutChangeListener{_,_,top,_,bottom,_,_,_,_->
-            val available=bottom-top
-            if(available>0) {
-                val row=context.dp(AppLayout.LIBRARY_ROW_HEIGHT);val space=context.dp(10)
-                val padding=grid.paddingTop+grid.paddingBottom
-                val preview=context.dp(48)
-                val count=((available-padding-preview+space)/(row+space)).coerceAtLeast(1)
-                val target=(count*row+(count-1)*space+padding+preview).coerceAtMost(available)
-                if(grid.layoutParams.height!=target)grid.layoutParams=LayoutParams(-1,target)
-            }
+            grid.fitViewport(bottom-top)
         }
         val empty=label(context,if(kind=="apps" && libraryPinnedOnly)"还没有固定到主屏幕的 App" else "暂无应用",14f,true).apply {gravity=Gravity.CENTER}
         gridBox.addView(empty,LayoutParams(-1,-1));grid.emptyView=empty
@@ -564,27 +530,13 @@ internal class NativeSurface(
             child.invalidate()
         }
     }
-    private fun button(title: String, subtitle: String="", action:()->Unit): LinearLayout {
-        val box=LinearLayout(context).apply {
-            orientation=LinearLayout.VERTICAL;gravity=Gravity.CENTER
-            setPadding(context.dp(13),context.dp(8),context.dp(13),context.dp(8))
-            isFocusable=true;isClickable=true;contentDescription=title;tag=title
-        }
-        val main=label(context,title,12f).apply {gravity=Gravity.CENTER}
-        val sub=label(context,subtitle,9f,true).apply{gravity=Gravity.CENTER}
-        box.addView(main);if(subtitle.isNotEmpty())box.addView(sub,LinearLayout.LayoutParams(-1,-2).apply { topMargin=context.dp(4) })
-        fun state(focus:Boolean) {
-            box.background=rounded(if(focus)0xfff0f2f5.toInt() else 0x18ffffff,context.dp(15).toFloat())
-            main.setTextColor(if(focus)0xff161c23.toInt() else WHITE)
-            sub.setTextColor(if(focus)0xff555e69.toInt() else SECONDARY)
-        }
-        box.setOnFocusChangeListener { _,focus->state(focus) };state(false);box.setOnClickListener{action()}
-        return box
+    private fun button(title:String,subtitle:String="",action:()->Unit):GlassListRow = GlassListRow(context).apply {
+        bind(GlassListItem(title,title,subtitle));tag=title;setOnClickListener{action()}
     }
     private fun buildPanel(kind: String) {
         val frame=FrameLayout(context).apply {
             tag="panel:"+kind
-            background=rounded(0xc52b2d32.toInt(),context.dp(30).toFloat(),0x60ffffff)
+            background=GlassBackground(context)
             clipToOutline=true
         }
         panels.addView(frame,LayoutParams(context.dp(342),-1,Gravity.END or Gravity.TOP).apply { setMargins(context.dp(20),context.dp(20),context.dp(20),context.dp(20)) })
@@ -597,7 +549,7 @@ internal class NativeSurface(
         heading.addView(closeControl(context,"关闭"){back()},LinearLayout.LayoutParams(context.dp(44),context.dp(44)))
         column.addView(heading)
         column.addView(label(context,"PTV Launcher",10f,true),LinearLayout.LayoutParams(-1,context.dp(24)).apply { topMargin=context.dp(6) })
-        val scroll=ScrollView(context).apply { isFillViewport=false;clipToPadding=false;clipChildren=false }
+        val scroll=GlassScrollView(context).apply { isFillViewport=false;clipToPadding=false;clipChildren=false }
         val content=LinearLayout(context).apply { orientation=LinearLayout.VERTICAL;clipChildren=false;clipToPadding=false
         }
         scroll.addView(content);column.addView(scroll,LinearLayout.LayoutParams(-1,0,1f))
@@ -667,10 +619,8 @@ internal class NativeSurface(
 }
 
 /** Original vector grid for the app library. */
-private class AppListGlyph(context:Context):View(context) {
-    override fun onDraw(canvas:Canvas) {
-        IosIcons.draw(context,canvas,R.drawable.f7_square_grid_2x2,RectF(0f,0f,width.toFloat(),height.toFloat()))
-    }
+private class AppListGlyph(context:Context):GlassIconView(context) {
+    init{setImageResource(R.drawable.f7_square_grid_2x2)}
 }
 
 /** Draw an actual preblurred image with filtered scaling, never a pixelated thumbnail. */

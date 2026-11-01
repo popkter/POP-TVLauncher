@@ -1,0 +1,8 @@
+<resources>
+    <declare-styleable name="GlassSurface">
+        <attr name="glassIconSize" format="dimension" />
+        <attr name="glassContentPadding" format="dimension" />
+        <attr name="glassCornerRadius" format="dimension" />
+        <attr name="glassFillOpacity" format="float" />
+    </declare-styleable>
+</resources>

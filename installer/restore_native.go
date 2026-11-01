@@ -116,6 +116,9 @@ func (a *App) restoreNative(t *TV, removePTV bool) error {
 	if err = a.mustSh(s, "settings", "delete", "secure", "ptv_installer_shortcuts"); err != nil {
 		return err
 	}
+	if err = a.mustSh(s, "sh", "-c", "pkill -f '^ptv-control-shell$' || true"); err != nil {
+		return err
+	}
 
 	if removePTV {
 		a.phase("移除 PTV、兼容入口及 PTV 数据", 65)

@@ -30,6 +30,41 @@ class AppSnapshotCacheTest {
             assertNull(read[1].banner)
         } finally {root.deleteRecursively()}
     }
+    @Test fun stagedReadKeepsOrderAndDecodesPinnedArtworkFirst() = kotlinx.coroutines.runBlocking {
+        val root=File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,"staged-${System.nanoTime()}")
+        root.mkdirs()
+        try {
+            val icon=Bitmap.createBitmap(16,16,Bitmap.Config.ARGB_8888).apply {eraseColor(Color.RED)}
+            val cache=AppSnapshotCache(root)
+            cache.write(listOf(AppEntry("a","A",icon,true,artworkKey="v1"),AppEntry("b","B",icon,true,icon,artworkKey="v2")))
+            var published=false
+            val full=cache.readStaged(listOf("b")) { first ->
+                published=true
+                assertEquals(listOf("a","b"),first.map {it.id})
+                assertNull(first[0].icon)
+                assertNotNull(first[1].icon)
+                assertNotNull(first[1].banner)
+                assertEquals("v2",first[1].artworkKey)
+            }
+            assertTrue(published)
+            assertNotNull(full[0].icon)
+            assertEquals("v1",full[0].artworkKey)
+        } finally {root.deleteRecursively()}
+    }
+    @Test fun legacySnapshotRemainsReadable() {
+        val root=File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,"legacy-${System.nanoTime()}")
+        root.mkdirs()
+        try {
+            java.io.DataOutputStream(File(root,"apps-v1.bin").outputStream()).use {
+                it.writeInt(0x50545631);it.writeInt(1)
+                it.writeUTF("old");it.writeUTF("Old app");it.writeBoolean(true);it.writeInt(Color.RED)
+                it.writeInt(0);it.writeInt(0)
+            }
+            val app=AppSnapshotCache(root).read().single()
+            assertEquals("old",app.id)
+            assertEquals("",app.artworkKey)
+        } finally {root.deleteRecursively()}
+    }
     @Test fun missingOrTruncatedSnapshotFallsBackToScan() {
         val root=File(InstrumentationRegistry.getInstrumentation().targetContext.cacheDir,"snapshot-test-${System.nanoTime()}")
         root.mkdirs()

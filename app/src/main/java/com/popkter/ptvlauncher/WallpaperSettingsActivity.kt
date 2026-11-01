@@ -1,4 +1,5 @@
 package com.popkter.ptvlauncher
+import com.popkter.glass_comonpent.*
 
 import android.app.Activity
 import android.os.Bundle
@@ -33,7 +34,48 @@ class WallpaperSettingsActivity:Activity() {
     private var gridPosition=0
     private var focusedPhoto:String?=null
     private var busy=false
-    override fun onCreate(state:Bundle?) {super.onCreate(state);if(android.os.Build.VERSION.SDK_INT>=33)onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT){goBack()};window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);render()}
+    private var closingToControlCenter=false
+    private var sharedBackdrop:Bitmap?=null
+    private lateinit var scene:FrameLayout
+    private lateinit var contentLayer:FrameLayout
+    private var backdropLayer:View?=null
+    private fun showScene(content:View) {
+        if(!::scene.isInitialized) {
+            scene=FrameLayout(this).apply{tag="wallpaper:scene"}
+            sharedBackdrop?.let{image->
+                backdropLayer=object:View(this) {
+                    private val paint=android.graphics.Paint(android.graphics.Paint.FILTER_BITMAP_FLAG)
+                    override fun onDraw(canvas:android.graphics.Canvas) {
+                        canvas.drawBitmap(image,null,android.graphics.RectF(0f,0f,width.toFloat(),height.toFloat()),paint)
+                        canvas.drawColor(0x36121e2c)
+                    }
+                }.apply{tag="wallpaper:fixed-background";alpha=0f}
+                scene.addView(backdropLayer,FrameLayout.LayoutParams(-1,-1))
+            }
+            contentLayer=FrameLayout(this).apply{tag="wallpaper:content";alpha=0f;translationX=dp(24).toFloat()}
+            scene.addView(contentLayer,FrameLayout.LayoutParams(-1,-1));setContentView(scene)
+            scene.viewTreeObserver.addOnPreDrawListener(object:android.view.ViewTreeObserver.OnPreDrawListener {
+                override fun onPreDraw():Boolean {
+                    scene.viewTreeObserver.removeOnPreDrawListener(this)
+                    contentLayer.animate().alpha(1f).translationX(0f).setDuration(320).setInterpolator(android.view.animation.DecelerateInterpolator()).start()
+                    backdropLayer?.animate()?.alpha(1f)?.setDuration(320)?.start()
+                    return true
+                }
+            })
+        }
+        contentLayer.removeAllViews();contentLayer.addView(content,FrameLayout.LayoutParams(-1,-1))
+    }
+    private fun finishToControlCenter() {
+        @Suppress("DEPRECATION") val origin=intent.getParcelableExtra<android.graphics.Rect>("control_wallpaper_origin")
+        if(origin==null){finish();return}
+        if(closingToControlCenter)return
+        closingToControlCenter=true
+        backdropLayer?.animate()?.alpha(0f)?.setDuration(260)?.start()
+        contentLayer.animate().alpha(0f).translationX(dp(24).toFloat())
+            .setDuration(260).setInterpolator(android.view.animation.PathInterpolator(.4f,0f,.2f,1f))
+            .withEndAction{finish();@Suppress("DEPRECATION") overridePendingTransition(0,0)}.start()
+    }
+    override fun onCreate(state:Bundle?) {super.onCreate(state);sharedBackdrop=WallpaperTransitionBackdrop.take();if(android.os.Build.VERSION.SDK_INT>=33)onBackInvokedDispatcher.registerOnBackInvokedCallback(android.window.OnBackInvokedDispatcher.PRIORITY_DEFAULT){goBack()};window.addFlags(android.view.WindowManager.LayoutParams.FLAG_KEEP_SCREEN_ON);render()}
     override fun onStart() {
         super.onStart();started=true
         collector=scope.launch {
@@ -43,7 +85,7 @@ class WallpaperSettingsActivity:Activity() {
                     entry to BitmapFactory.decodeFile(entry.file.path,BitmapFactory.Options().apply{inSampleSize=8})
                 }}
                 selected.retainAll(entries.map{it.first.file.name}.toSet())
-                if(backdrop==null) {
+                if(backdrop==null && sharedBackdrop==null) {
                     backdrop=graph.wallpaperBackdrop ?: withContext(Dispatchers.IO) {
                         val file=if(prefs.customWallpaper)entries.firstOrNull{it.first.file.name==prefs.fixedWallpaper}?.first?.file ?: entries.firstOrNull()?.first?.file
                             else graph.wallpaper.loadCached().entries.firstOrNull()?.file
@@ -58,13 +100,13 @@ class WallpaperSettingsActivity:Activity() {
         if(uploading)startReceiver()
     }
     override fun onStop() {started=false;collector?.cancel();receiverJob?.cancel();server?.close();server=null;super.onStop()}
-    override fun onDestroy() {scope.cancel();super.onDestroy()}
+    override fun onDestroy() {scope.cancel();sharedBackdrop?.recycle();sharedBackdrop=null;super.onDestroy()}
     private fun goBack() {
         when {
             uploading->{uploading=false;receiverJob?.cancel();server?.close();server=null;render()}
             moving!=null->{moving=null;render()}
             selecting || sorting->{selecting=false;sorting=false;selected.clear();confirmingDelete=false;render()}
-            else->finish()
+            else->finishToControlCenter()
         }
     }
     // Physical TV remotes need paired key handling; gestures use the registered callback.
@@ -92,7 +134,7 @@ class WallpaperSettingsActivity:Activity() {
         }
     }
     private fun backgroundRoot():FrameLayout = FrameLayout(this).apply {
-        addView(WallpaperView(this@WallpaperSettingsActivity).apply{bitmap=backdrop},FrameLayout.LayoutParams(-1,-1))
+        if(sharedBackdrop==null)addView(WallpaperView(this@WallpaperSettingsActivity).apply{bitmap=backdrop},FrameLayout.LayoutParams(-1,-1))
     }
     private fun mutate(block: suspend ()->Unit) {
         if(busy)return
@@ -100,19 +142,15 @@ class WallpaperSettingsActivity:Activity() {
         scope.launch {
             try {block()} catch(e:Exception) {
                 if(e is CancellationException)throw e
-                Toast.makeText(this@WallpaperSettingsActivity,"操作失败，请重试",Toast.LENGTH_SHORT).show()
+                com.popkter.glass_comonpent.GlassMessages.show(this@WallpaperSettingsActivity,"操作失败，请重试")
             } finally {busy=false}
         }
     }
-    private fun control(title:String,key:String,active:Boolean=false,action:()->Unit):TextView = label(this,title,12f).apply {
-        id=View.generateViewId();tag=key;isFocusable=true;isClickable=true
-        if(android.os.Build.VERSION.SDK_INT>=26)defaultFocusHighlightEnabled=false;gravity=Gravity.CENTER
-        setPadding(dp(12),dp(9),dp(12),dp(9))
-        fun state(f:Boolean) {
-            background=android.graphics.drawable.RippleDrawable(android.content.res.ColorStateList.valueOf(0x40ffffff),rounded(if(f)WHITE else if(active)0x55ffffff else 0x26ffffff,dp(10).toFloat(),0x30ffffff),null)
-            setTextColor(if(key=="confirm" || key=="delete")0xffff6961.toInt() else if(f)0xff192434.toInt() else WHITE)
-        }
-        state(false);setOnFocusChangeListener{_,f->state(f);animate().scaleX(if(f)1.025f else 1f).scaleY(if(f)1.025f else 1f).setDuration(140).start()};setOnClickListener{action()}
+    private fun control(title:String,key:String,active:Boolean=false,action:()->Unit):GlassButton = GlassButton(this).apply {
+        this.title=title;tag=key;isSelected=active;contentLayout=GlassContentLayout.ICON_TEXT
+        glassStyle=glassStyle.copy(contentPadding=12f,cornerRadius=16f)
+        if(key=="confirm" || key=="delete")titleView.setTextColor(0xffff6961.toInt())
+        setOnClickListener{action()}
     }
     private fun render() {
         if(uploading){renderUpload();return}
@@ -120,16 +158,16 @@ class WallpaperSettingsActivity:Activity() {
         val previous=currentFocus?.tag
         val restorePhoto=moving ?: focusedPhoto
         val root=backgroundRoot()
-        val content=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(36),dp(25),dp(36),dp(24))}
-        root.addView(content,FrameLayout.LayoutParams(-1,-1))
-        val heading=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
-        heading.addView(label(this,"壁纸",28f),LinearLayout.LayoutParams(0,-2,1f))
-        heading.addView(closeControl(this,"返回桌面"){finish()}.apply{tag="back"},LinearLayout.LayoutParams(dp(44),dp(44)))
-        content.addView(heading,LinearLayout.LayoutParams(-1,dp(48)))
-        val columns=LinearLayout(this)
-        content.addView(columns,LinearLayout.LayoutParams(-1,0,1f).apply{topMargin=dp(18)})
+        val content=LinearLayout(this).apply{tag="wallpaper:layout";orientation=LinearLayout.VERTICAL;setPadding(dp(36),0,dp(36),0)}
+        root.addView(content,FrameLayout.LayoutParams(-1,dp(ControlCenterLayout.HEIGHT)).apply{topMargin=dp(ControlCenterLayout.TOP)})
+        val heading=LinearLayout(this).apply{tag="wallpaper:header";gravity=Gravity.CENTER_VERTICAL}
+        heading.addView(label(this,"壁纸",23f),LinearLayout.LayoutParams(0,-2,1f))
+        heading.addView(closeControl(this,"返回桌面"){finishToControlCenter()}.apply{tag="back"},LinearLayout.LayoutParams(dp(36),dp(36)))
+        content.addView(heading,LinearLayout.LayoutParams(-1,dp(ControlCenterLayout.HEADER_HEIGHT)))
+        val columns=LinearLayout(this).apply{tag="wallpaper:body"}
+        content.addView(columns,LinearLayout.LayoutParams(-1,0,1f).apply{topMargin=dp(ControlCenterLayout.CONTENT_TOP-ControlCenterLayout.HEADER_HEIGHT)})
         val side=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
-        columns.addView(side,LinearLayout.LayoutParams(dp(202),-1).apply{rightMargin=dp(26)})
+        columns.addView(side,LinearLayout.LayoutParams(dp(202),-1).apply{marginEnd=dp(26)})
         side.addView(label(this,"壁纸来源",11f),LinearLayout.LayoutParams(-1,dp(28)))
         val sideButtons=mutableListOf<View>()
         fun option(title:String,key:String,active:Boolean,action:()->Unit) {
@@ -143,7 +181,7 @@ class WallpaperSettingsActivity:Activity() {
         option("顺序轮播 · 每 30 秒","rotate",prefs.customWallpaper && prefs.customRotate){scope.launch{graph.store.wallpaperSource(true);graph.store.customRotation(true)}}
         option("固定一张","fixed",prefs.customWallpaper && !prefs.customRotate){
             entries.getOrNull(gridPosition)?.first?.let{scope.launch{graph.store.fixedWallpaper(it.file.name)}}
-                ?: Toast.makeText(this,"请先上传图片",Toast.LENGTH_SHORT).show()
+                ?: com.popkter.glass_comonpent.GlassMessages.show(this,"请先上传图片")
         }
         side.addView(label(this,"相册顺序即轮播顺序\n选中图片可固定显示",11f),LinearLayout.LayoutParams(-1,-2).apply{topMargin=dp(18)})
         val album=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL}
@@ -151,7 +189,7 @@ class WallpaperSettingsActivity:Activity() {
         val toolbar=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
         toolbar.addView(label(this,if(selecting)"已选 ${selected.size} 张" else "自定义相册 · ${entries.size} 张",14f),LinearLayout.LayoutParams(0,-2,1f))
         fun tool(title:String,key:String,action:()->Unit) {
-            toolbar.addView(control(title,key,false,action),LinearLayout.LayoutParams(-2,dp(44)).apply{leftMargin=dp(7)})
+            toolbar.addView(control(title,key,false,action),LinearLayout.LayoutParams(-2,dp(44)).apply{marginStart=dp(7)})
         }
         if(selecting) {
             if(confirmingDelete) {
@@ -180,7 +218,7 @@ class WallpaperSettingsActivity:Activity() {
             else->"确定固定当前图片 · 长按进入排序"
         },10f)
         album.addView(hint,LinearLayout.LayoutParams(-1,dp(27)).apply{topMargin=dp(8)})
-        val grid=GridView(this).apply {
+        val grid=GlassGridView(this).apply {
             id=View.generateViewId();tag="album:grid";numColumns=4
             if(android.os.Build.VERSION.SDK_INT>=26)defaultFocusHighlightEnabled=false
             horizontalSpacing=dp(12);verticalSpacing=dp(12)
@@ -240,7 +278,7 @@ class WallpaperSettingsActivity:Activity() {
         album.addView(gridBox,LinearLayout.LayoutParams(-1,0,1f))
         for(button in sideButtons)button.nextFocusRightId=grid.id
         for(i in 1 until toolbar.childCount)toolbar.getChildAt(i).nextFocusDownId=grid.id
-        setContentView(root)
+        showScene(root)
         grid.post {
             val position=entries.indexOfFirst{it.first.file.name==restorePhoto}.takeIf{it>=0} ?: gridPosition.coerceIn(0,(entries.size-1).coerceAtLeast(0))
             grid.setSelection(position)
@@ -252,7 +290,7 @@ class WallpaperSettingsActivity:Activity() {
         val oldFocus=currentFocus?.tag
         val box=LinearLayout(this).apply{orientation=LinearLayout.VERTICAL;setPadding(dp(42),dp(24),dp(42),dp(24));setBackgroundColor(0xff182333.toInt())}
         box.setBackgroundColor(Color.TRANSPARENT)
-        val scroll=ScrollView(this).apply{isFillViewport=true;addView(box)}
+        val scroll=GlassScrollView(this).apply{isFillViewport=true;addView(box)}
         fun text(value:String,size:Float=15f)=label(this,value,size).also{box.addView(it,LinearLayout.LayoutParams(-1,-2).apply{bottomMargin=dp(12)})}
         val header=LinearLayout(this).apply{gravity=Gravity.CENTER_VERTICAL}
         header.addView(label(this,"扫码上传壁纸",28f),LinearLayout.LayoutParams(0,-2,1f))
@@ -265,13 +303,13 @@ class WallpaperSettingsActivity:Activity() {
                 val bits=QRCodeWriter().encode(address,BarcodeFormat.QR_CODE,360,360)
                 val pixels=IntArray(360*360){if(bits[it%360,it/360])Color.BLACK else Color.WHITE}
                 val bitmap=Bitmap.createBitmap(pixels,360,360,Bitmap.Config.ARGB_8888)
-                box.addView(ImageView(this).apply{setImageBitmap(bitmap);contentDescription="扫码上传壁纸"},LinearLayout.LayoutParams(dp(190),dp(190)).apply{gravity=Gravity.CENTER_HORIZONTAL;bottomMargin=dp(12)})
+                box.addView(GlassIconView(this).apply{setImageBitmap(bitmap);contentDescription="扫码上传壁纸"},LinearLayout.LayoutParams(dp(190),dp(190)).apply{gravity=Gravity.CENTER_HORIZONTAL;bottomMargin=dp(12)})
                 text(address,13f)
                 text("已保存 ${entries.size} / 30 张 · 支持 JPG、PNG、WebP，每张不超过 12 MB",13f)
             } else text(status,14f)
             box.addView(control("刷新二维码","retry"){startReceiver()},LinearLayout.LayoutParams(dp(160),dp(44)).apply{gravity=Gravity.CENTER_HORIZONTAL})
         }
-        setContentView(backgroundRoot().apply{addView(scroll)})
+        showScene(backgroundRoot().apply{addView(scroll)})
         (oldFocus?.let{box.findViewWithTag<View>(it)} ?: box.findViewWithTag(if(uploading)"done" else "bing"))?.requestFocus()
     }
 }

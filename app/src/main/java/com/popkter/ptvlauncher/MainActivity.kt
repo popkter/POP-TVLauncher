@@ -1,5 +1,6 @@
 // Copyright 2026 popkter. SPDX-License-Identifier: PolyForm-Noncommercial-1.0.0
 package com.popkter.ptvlauncher
+import com.popkter.glass_comonpent.*
 
 import android.annotation.SuppressLint
 import android.app.Activity
@@ -43,6 +44,7 @@ class MainActivity : Activity() {
     private var saver=false
     private var wakeKey:Int?=null
     private var loadedPath:String?=null
+    private var controlCenterWasVisible=false
     private val menuKey=MenuKeyGate()
     private val tick=object:Runnable {
         override fun run() { updateClock();if(isForeground)handler.postDelayed(this,30_000) }
@@ -75,7 +77,7 @@ class MainActivity : Activity() {
             }
         root=FrameLayout(this);landscape=WallpaperView(this);root.addView(landscape,FrameLayout.LayoutParams(-1,-1))
         chrome=FrameLayout(this);root.addView(chrome,FrameLayout.LayoutParams(-1,-1))
-        chrome.addView(label(this,"PTV",18f),FrameLayout.LayoutParams(dp(90),dp(34),Gravity.TOP or Gravity.START).apply {setMargins(dp(30),dp(25),0,0)})
+        chrome.addView(label(this,"PTV",18f),FrameLayout.LayoutParams(dp(90),dp(34),Gravity.TOP or Gravity.START).apply {marginStart=dp(30);topMargin=dp(25)})
         // Balanced clock typography in the wallpaper's upper-right area.
         // A native TextView keeps minute changes local and needs no bitmap/GPU effects.
         clock=AlignedClockView(this).apply {
@@ -86,16 +88,22 @@ class MainActivity : Activity() {
             setShadowLayer(dp(2).toFloat(),0f,dp(1).toFloat(),0x40000000)
         }
         chrome.addView(clock,FrameLayout.LayoutParams(dp(300),dp(100),Gravity.TOP or Gravity.END).apply {
-            setMargins(0,dp(AppLayout.RAIL_TOP+AppLayout.RAIL_SCROLL_INSET+AppLayout.CARD_INSET),dp(AppLayout.HOME_RIGHT_MARGIN),0)
+            topMargin=dp(AppLayout.RAIL_TOP+AppLayout.RAIL_SCROLL_INSET+AppLayout.CARD_INSET);marginEnd=dp(AppLayout.HOME_RIGHT_MARGIN)
         })
         val settings=SettingsButton(this).apply {
             setOnClickListener { surface.show("settings") }
         }
-        chrome.addView(settings,FrameLayout.LayoutParams(dp(36),dp(36),Gravity.TOP or Gravity.END).apply {setMargins(0,dp(20),dp(AppLayout.HOME_RIGHT_MARGIN),0)})
+        chrome.addView(settings,FrameLayout.LayoutParams(dp(36),dp(36),Gravity.TOP or Gravity.END).apply {topMargin=dp(20);marginEnd=dp(AppLayout.HOME_RIGHT_MARGIN)})
         caption=label(this,"",10f,true).apply {gravity=Gravity.END;setLineSpacing(dp(5).toFloat(),1f)}
-        chrome.addView(caption,FrameLayout.LayoutParams(dp(570),dp(80),Gravity.BOTTOM or Gravity.END).apply {setMargins(0,0,dp(30),dp(22))})
+        chrome.addView(caption,FrameLayout.LayoutParams(dp(570),dp(80),Gravity.BOTTOM or Gravity.END).apply {marginEnd=dp(30);bottomMargin=dp(22)})
         surface=NativeSurface(this,graph,false,{surface.show(null)}) {
-            chrome.visibility=if(surface.mode==null && !saver)View.VISIBLE else View.GONE
+            val controlCenter=surface.mode=="settings"
+            chrome.visibility=if((surface.mode==null || controlCenter) && !saver)View.VISIBLE else View.GONE
+            if(controlCenter!=controlCenterWasVisible) {
+                chrome.descendantFocusability=if(controlCenter)ViewGroup.FOCUS_BLOCK_DESCENDANTS else ViewGroup.FOCUS_AFTER_DESCENDANTS
+                if(controlCenter)surface.bringToFront() else chrome.bringToFront()
+                controlCenterWasVisible=controlCenter
+            }
             armIdle()
         }
         root.addView(surface,FrameLayout.LayoutParams(-1,-1))
@@ -150,6 +158,11 @@ class MainActivity : Activity() {
     override fun onWindowFocusChanged(hasFocus:Boolean) {
         super.onWindowFocusChanged(hasFocus)
         hasInputFocus=hasFocus
+        if(hasFocus && ::surface.isInitialized && surface.mode=="settings")surface.refreshStatus()
+    }
+    override fun onRequestPermissionsResult(requestCode:Int,permissions:Array<out String>,grantResults:IntArray) {
+        super.onRequestPermissionsResult(requestCode,permissions,grantResults)
+        if(requestCode==735)surface.refreshStatus()
     }
     override fun onNewIntent(intent:Intent) {
         super.onNewIntent(intent);setIntent(intent)
@@ -168,7 +181,7 @@ class MainActivity : Activity() {
             val result=if(event.action==KeyEvent.ACTION_DOWN)menuKey.down(event.downTime,event.repeatCount,true)
                 else menuKey.up(event.downTime)
             if(result==MenuKeyGate.Result.OPEN && !SystemLinks.showNativeControlCenter(this))
-                Toast.makeText(this,"系统未提供可用的原生控制中心入口",Toast.LENGTH_SHORT).show()
+                com.popkter.glass_comonpent.GlassMessages.show(this,"系统未提供可用的原生控制中心入口")
             return true
         }
         if(event.keyCode==KeyEvent.KEYCODE_BACK) {if(event.action==KeyEvent.ACTION_UP && !event.isCanceled)surface.back();return true}
@@ -209,13 +222,13 @@ class MainActivity : Activity() {
 }
 
 /** Align visible digits, rather than the font's ascender and trailing side bearing. */
-private class AlignedClockView(context:Context):TextView(context) {
+private class AlignedClockView(context:Context):GlassTextView(context) {
     private val ink=Rect()
     override fun onDraw(canvas:Canvas) {
         val value=text.toString()
         if(value.isEmpty())return
         paint.color=currentTextColor
         paint.getTextBounds(value,0,value.length,ink)
-        canvas.drawText(value,(width-paddingRight-ink.right).toFloat(),(paddingTop-ink.top).toFloat(),paint)
+        canvas.drawText(value,(if(layoutDirection==View.LAYOUT_DIRECTION_RTL)paddingLeft-ink.left else width-paddingRight-ink.right).toFloat(),(paddingTop-ink.top).toFloat(),paint)
     }
 }

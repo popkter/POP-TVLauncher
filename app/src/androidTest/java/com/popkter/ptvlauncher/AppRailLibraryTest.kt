@@ -56,6 +56,22 @@ class AppRailLibraryTest {
         }
         instrument.waitForIdleSync()
     }
+    @Test fun backgroundArtworkCompletionKeepsPinnedCardsAndFocus() {
+        instrument.runOnMainSync {
+            val pinned=apps.first {it.launchable}
+            val other=apps.first {it.launchable && it.id!=pinned.id}
+            val settings=prefs.copy(pins=listOf(pinned.id))
+            val partial=listOf(pinned,other.copy(icon=null,banner=null))
+            rail.update(partial,settings)
+            val card=rail.findViewWithTag<View>("app:"+pinned.id)
+            card.requestFocus()
+            rail.update(listOf(pinned,other),settings)
+            assertSame(card,rail.findViewWithTag<View>("app:"+pinned.id))
+            assertSame(card,rail.findFocus())
+            rail.update(listOf(pinned.copy(label=pinned.label+" updated"),other),settings)
+            assertNotSame(card,rail.findViewWithTag<View>("app:"+pinned.id))
+        }
+    }
     @Test fun cardSizeIsIdenticalForTwoAndTenPinnedApps() {
         var twoHeight=0
         instrument.runOnMainSync {
@@ -213,6 +229,32 @@ class AppRailLibraryTest {
             assertFalse(grid.canScrollVertically(1))
             assertTrue(grid.selectedView.bottom<=grid.height-grid.paddingBottom)
         }
+        fun assertUpperArtworkPreview() {
+            instrument.runOnMainSync {
+                val grid=rail.findViewWithTag<GridView>("library")
+                val first=grid.getChildAt(0)
+                val artworkBottom=first.top+activity.dp(AppLayout.CARD_INSET+AppLayout.LIBRARY_ROW_HEIGHT-35)
+                assertTrue("Upper preview must contain half an icon, not only its label",
+                    artworkBottom-grid.paddingTop>=activity.dp(28))
+                assertTrue("Upper preview should still be partial",first.top<grid.paddingTop)
+                assertTrue("Selected row must remain fully visible",grid.selectedView.top>=grid.paddingTop)
+                assertTrue(grid.selectedView.bottom<=grid.height-grid.paddingBottom)
+            }
+        }
+        assertUpperArtworkPreview()
+        repeat(5) {
+            key(KeyEvent.KEYCODE_DPAD_UP)
+            assertUpperArtworkPreview()
+        }
+        key(KeyEvent.KEYCODE_DPAD_UP)
+        instrument.runOnMainSync {
+            val grid=rail.findViewWithTag<GridView>("library")
+            assertEquals(0,grid.selectedItemPosition)
+            assertFalse(grid.canScrollVertically(-1))
+            val last=grid.getChildAt(grid.childCount-1)
+            assertTrue(last.top<grid.height-grid.paddingBottom)
+            assertTrue(last.bottom>grid.height-grid.paddingBottom)
+        }
     }
     @Test fun libraryFiltersCanBeReachedWithDirectionsAndReturnToRail() {
         instrument.runOnMainSync {rail.firstRail()}
@@ -220,8 +262,12 @@ class AppRailLibraryTest {
         instrument.runOnMainSync {
             assertEquals(apps.count{it.launchable},rail.findViewWithTag<GridView>("library").count)
         }
+        instrument.runOnMainSync {assertTrue("Library grid must initially own focus: ${rail.findFocus()?.tag}",rail.findViewWithTag<GridView>("library").hasFocus())}
         key(KeyEvent.KEYCODE_DPAD_UP)
-        instrument.runOnMainSync {assertEquals("library:all",rail.findFocus().tag)}
+        instrument.runOnMainSync {
+            val all=rail.findViewWithTag<View>("library:all")
+            assertEquals("Tab shown=${all.isShown} size=${all.width}x${all.height} focusable=${all.isFocusable} parent=${all.parent}","library:all",rail.findFocus().tag)
+        }
         key(KeyEvent.KEYCODE_DPAD_RIGHT)
         instrument.runOnMainSync {assertEquals("library:pinned",rail.findFocus().tag)}
         key(KeyEvent.KEYCODE_DPAD_CENTER)

@@ -8,7 +8,7 @@ import android.widget.ScrollView
 /** ScrollView's default focus calculation includes clipped padding in its viewport.
  * Keep the entire focused row inside the drawable viewport. Its artwork and the
  * maximum focus halo fit within that row, including during the scale animation. */
-internal class RailScrollView(context:Context):ScrollView(context) {
+internal class RailScrollView(context:Context):com.popkter.glass_comonpent.GlassScrollView(context) {
     init { isVerticalFadingEdgeEnabled=false }
     override fun computeScrollDeltaToGetChildRectOnScreen(rect:Rect):Int {
         if(childCount==0)return 0
