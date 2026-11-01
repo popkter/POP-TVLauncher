@@ -1,0 +1,43 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>PTV 安装助手</title><link rel="icon" type="image/svg+xml" href="/icon.svg"><link rel="stylesheet" href="/style.css"></head>
+<body>
+<svg class="symbols" aria-hidden="true"><defs>
+<symbol id="tv" viewBox="0 0 24 24"><rect x="2.5" y="4" width="19" height="13.5" rx="3"/><path d="M8 21h8m-4-3.5V21"/></symbol>
+<symbol id="arrow" viewBox="0 0 24 24"><path d="M4 12h15m-6-6 6 6-6 6"/></symbol>
+<symbol id="check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+<symbol id="shield" viewBox="0 0 24 24"><path d="M12 2.5 3.5 6v6c0 5 8.5 9.5 8.5 9.5s8.5-4.5 8.5-9.5V6Z"/><path d="m8 12 3 3 5-6"/></symbol>
+<symbol id="reset" viewBox="0 0 24 24"><path d="M4 9a8.5 8.5 0 1 1 0 7M4 3v6h6"/></symbol>
+<symbol id="close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+<symbol id="download" viewBox="0 0 24 24"><path d="M12 3v12m-5-5 5 5 5-5M4 16v4h16v-4"/></symbol>
+</defs></svg>
+<div class="window">
+<aside>
+ <div class="brand"><span class="app-icon"><svg><use href="#tv"/></svg></span><div>PTV<span>安装助手</span></div></div>
+ <div class="sidebar-label">开始使用</div>
+ <nav aria-label="安装步骤"><button class="nav-item active" data-scroll="connection"><span>1</span>连接电视</button><button class="nav-item" data-scroll="setup"><span>2</span>安装与配置</button><button class="nav-item" data-scroll="results"><span>3</span>检查与完成</button></nav>
+ <div class="sidebar-bottom"><svg><use href="#shield"/></svg><p>只在你的电脑与电视之间操作。<br>配置备份保存在本机。</p><span class="build">预览版 · Windows x64</span></div>
+</aside>
+<main>
+ <header><div><div class="eyebrow">WELCOME TO PTV</div><h1>让电视，回归简单。</h1><p>连接电视，其余交给安装助手。</p></div><span class="pill" id="connectionState"><i></i>尚未连接</span></header>
+ <section class="card" id="connection"><div class="section-heading"><span class="section-icon"><svg><use href="#tv"/></svg></span><div><h2>连接你的电视</h2><p>电脑与电视连接同一局域网，并在电视设置中开启 ADB 调试。</p></div></div>
+ <form id="connectForm"><label for="address">电视地址</label><div class="input-row"><input id="address" name="address" placeholder="192.168.1.20:5555" autocomplete="off" spellcheck="false" required><button class="primary" type="submit" id="connectButton">连接电视<svg><use href="#arrow"/></svg></button></div></form>
+ <div class="help-line">首次连接时，请在电视上选择“允许调试”。</div>
+ <div class="device-row"><select id="devices" aria-label="已连接设备"><option value="">选择 USB 或已连接的电视</option></select><button class="secondary small" id="scan">刷新设备</button></div>
+ <details><summary>使用无线配对码连接</summary><div class="pair-fields"><label>配对地址<input id="pairAddress" placeholder="电视显示的 IP:配对端口"></label><label>配对码<input id="pairCode" inputmode="numeric" maxlength="6" placeholder="6 位数字"></label><button class="secondary small" id="pair">配对</button></div><p class="hint">配对成功后，使用电视显示的“调试端口”在上方连接；两个端口通常不同。</p></details>
+ <div class="device-info" id="deviceInfo" hidden><span class="device-badge"><svg><use href="#tv"/></svg></span><div><strong id="deviceModel"></strong><p id="deviceVersion"></p></div><span class="connected-dot">已连接</span></div>
+ </section>
+ <section class="card" id="setup"><div class="section-title"><h2>一次配置，即刻开始</h2><span class="subtle">保留现有 PTV 数据</span></div>
+ <div class="features"><div><span class="mini-icon blue"><svg><use href="#download"/></svg></span><div><h3>自动检查 PTV</h3><p>已安装则直接配置，未安装则自动安装</p></div><svg class="tick"><use href="#check"/></svg></div><div><span class="mini-icon purple"><svg><use href="#tv"/></svg></span><div><h3>设为默认桌面</h3><p>主页键与开机启动入口</p></div><svg class="tick"><use href="#check"/></svg></div><div><span class="mini-icon green"><svg><use href="#shield"/></svg></span><div><h3>开启遥控器快捷功能</h3><p>无障碍授权、长按返回与服务自动恢复</p></div><svg class="tick"><use href="#check"/></svg></div></div>
+ <label class="compat" id="compatRow" hidden><input id="bridge" type="checkbox"><span><strong>小米桌面兼容模式（自动启用）</strong><small>仅针对已验证的 MiTV-MFTR0 / OS3.0.102 固件。安装或复用兼容入口并停用原桌面。回到小米桌面请使用“一键还原原生系统”。</small></span></label>
+ <div class="install-footer"><p id="installHint">连接电视后即可开始。部分固件可能限制默认桌面或原生控制中心。</p><div class="actions"><button class="secondary" id="installOnly" disabled>安装／更新 PTV</button><button class="primary" id="install" disabled>一键配置<svg><use href="#arrow"/></svg></button></div></div>
+ </section>
+ <section class="card progress-card" id="results"><div class="section-title"><h2 id="phase">准备连接电视</h2><span id="percentage">0%</span></div><div class="progress-track" role="progressbar" aria-label="安装进度" aria-valuemin="0" aria-valuemax="100" aria-valuenow="0"><div id="progress"></div></div><div class="error" id="error" role="alert" hidden></div><div id="checks" aria-live="polite"></div>
+ <div class="actions"><button class="secondary small" id="verify" disabled>重新检查</button><button class="secondary small" id="reboot" disabled>重启验证</button><button class="secondary small" id="homeSettings" disabled>电视桌面设置</button><button class="text-button" id="restore" disabled><svg><use href="#reset"/></svg>恢复安装前配置</button></div>
+ <details id="logDetails"><summary>查看操作记录</summary><pre id="logs">尚无操作记录</pre><button class="text-button" id="saveLogs">保存日志</button></details>
+ </section>
+ <section class="card" id="nativeRestore"><div class="section-heading"><span class="section-icon"><svg><use href="#reset"/></svg></span><div><h2>一键还原原生系统</h2><p>恢复小米原生桌面，关闭 PTV 接管；可选择保留或卸载 PTV。</p></div></div><p class="hint">默认停用 PTV 并保留应用和数据，之后可一键配置重新启用。也可选择卸载并删除 PTV 数据。其他应用、账号与电视设置保留。仅支持已适配的小米型号与固件，无需安装前备份。</p><div class="install-footer"><p id="nativeHint">连接电视后检查是否支持。</p><button class="secondary" id="restoreNative" disabled><svg><use href="#reset"/></svg>一键还原</button></div></section>
+ <footer><span>PTV 安装助手 · 本地运行</span><button class="text-button" id="about">版本与许可</button><button class="text-button" id="quit">退出助手</button></footer>
+ </main></div>
+ <dialog id="dialog"><button class="dialog-close" id="dismiss" aria-label="关闭"><svg><use href="#close"/></svg></button><span class="dialog-icon"><svg><use href="#shield"/></svg></span><h2 id="dialogTitle"></h2><p id="dialogBody"></p><label class="restore-choice" id="restoreChoice" hidden><input type="checkbox" id="removePTV"><span>同时卸载 PTV 和兼容入口，并删除布局、自定义壁纸及偏好（不可恢复）</span></label><div class="dialog-actions"><button class="secondary" id="cancelDialog">取消</button><button class="primary" id="confirmDialog">继续</button></div></dialog>
+ <script src="/app.js"></script>
+</body></html>

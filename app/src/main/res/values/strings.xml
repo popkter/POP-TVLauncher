@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">PTV Launcher</string>
+    <string name="accessibility_description">长按返回键打开透明应用栏；短按返回执行正常返回。菜单键保持系统和当前应用的原生行为。系统不支持实时模糊时，仅在打开浮层时在内存中截取背景用于模糊，不保存或上传截图、按键或应用使用记录。请仅在需要快捷切换时启用。</string>
+</resources>

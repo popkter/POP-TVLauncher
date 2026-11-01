@@ -1,0 +1,5 @@
+/payload/*
+/dist/*
+/resource_windows_amd64.syso
+/preview.png
+/.build-tools/
